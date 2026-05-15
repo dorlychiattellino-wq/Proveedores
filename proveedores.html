@@ -579,7 +579,7 @@ function buildModal() {
     <button class="add-item-btn" id="addItem">+ Agregar ítem</button>
     <div class="total-box" id="total-box">
       <div class="total-row"><span>Subtotal neto:</span><span id="t-neto">${fmt(neto, d.moneda||'ARS')}</span></div>
-      ${(d.tipoIva!=='incluido')?`<div class="total-row"><span>IVA ${d.tipoIva==='10.5'?'10.5':'21'}%:</span><span id="t-iva">${fmt(neto*(d.tipoIva==='10.5'?0.105:0.21), d.moneda||'ARS')}</span></div>`:''}
+      ${(d.tipoIva!=='incluido')?`<div class="total-row"><span id="t-iva-label">IVA ${d.tipoIva==='10.5'?'10.5':'21'}%:</span><span id="t-iva">${fmt(neto*(d.tipoIva==='10.5'?0.105:0.21), d.moneda||'ARS')}</span></div>`:''}
       <div class="total-final"><span>TOTAL c/IVA:</span><span id="t-total">${fmt(conIva, d.moneda||'ARS')}</span></div>
     </div>
     <div class="field"><label class="field-label">Notas / Condiciones</label><textarea id="m_notas">${d.notas||''}</textarea></div>
@@ -852,6 +852,8 @@ function updateTotals() {
   if(tn) tn.textContent = fmt(neto, moneda);
   if(tt) tt.textContent = fmt(conIva, moneda);
   if(ti) { ti.textContent = fmt(neto*(tipoIva==='10.5'?0.105:0.21), moneda); }
+  const tiLabel = document.getElementById('t-iva-label');
+  if(tiLabel) tiLabel.textContent = 'IVA ' + (tipoIva==='10.5'?'10.5':'21') + '%:';
 }
 
 function checkDiff() {
