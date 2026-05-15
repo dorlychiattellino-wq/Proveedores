@@ -673,6 +673,33 @@ function attachEvents() {
   document.getElementById('app').addEventListener('change', handleChange);
 }
 
+function saveFormState() {
+  // Guarda todos los campos del formulario en state.editData antes de re-renderizar
+  if(state.modal === 'nuevo_ppto' || state.modal === 'editar_ppto') {
+    const prov = document.getElementById('m_proveedor');
+    const desc = document.getElementById('m_descripcion');
+    const fecha = document.getElementById('m_fecha');
+    const moneda = document.getElementById('m_moneda');
+    const iva = document.getElementById('m_iva');
+    const validez = document.getElementById('m_validez');
+    const notas = document.getElementById('m_notas');
+    if(prov) state.editData.proveedor = prov.value;
+    if(desc) state.editData.descripcion = desc.value;
+    if(fecha) state.editData.fecha = fecha.value;
+    if(moneda) state.editData.moneda = moneda.value;
+    if(iva) state.editData.ivaIncluido = iva.value === 'incluido';
+    if(validez) state.editData.validezDias = parseInt(validez.value) || 30;
+    if(notas) state.editData.notas = notas.value;
+    // Guardar items actuales
+    document.querySelectorAll('[data-item]').forEach(inp => {
+      const i = parseInt(inp.dataset.item);
+      const field = inp.dataset.field;
+      if(!state.editData.items[i]) state.editData.items[i]={desc:'',cantidad:1,precioUnit:''};
+      state.editData.items[i][field] = inp.value;
+    });
+  }
+}
+
 function handleClick(e) {
   const t = e.target;
 
@@ -702,6 +729,7 @@ function handleClick(e) {
 
   // Agregar ítem
   if(t.id === 'addItem') {
+    saveFormState();
     if(!state.editData.items) state.editData.items=[];
     state.editData.items.push({desc:'',cantidad:1,precioUnit:''});
     render(); return;
@@ -709,6 +737,7 @@ function handleClick(e) {
 
   // Quitar ítem
   if(t.dataset.remove !== undefined) {
+    saveFormState();
     const i = parseInt(t.dataset.remove);
     state.editData.items.splice(i,1);
     if(state.editData.items.length===0) state.editData.items=[{desc:'',cantidad:1,precioUnit:''}];
