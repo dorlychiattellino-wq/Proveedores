@@ -234,10 +234,14 @@ function badge(estado) {
   const map = { pendiente:'Pendiente', pagado:'Pagado', parcial:'Pago Parcial', facturado:'Facturado', sin_factura:'Sin Factura', diferencia:'Diferencia', vigente:'Vigente' };
   return `<span class="badge b-${estado}">${map[estado]||estado}</span>`;
 }
-function calcTotales(items, ivaIncluido) {
+function calcTotales(items, ivaIncluido, tipoIva) {
   const neto = items.reduce((s,it) => s + (parseFloat(it.precioUnit)||0)*(parseFloat(it.cantidad)||0), 0);
-  const conIva = ivaIncluido ? neto : neto * 1.21;
-  return { neto, conIva };
+  let conIva;
+  const tipo = tipoIva || (ivaIncluido ? 'incluido' : '21');
+  if(tipo === 'incluido') conIva = neto;
+  else if(tipo === '10.5') conIva = neto * 1.105;
+  else conIva = neto * 1.21;
+  return { neto, conIva, tipo };
 }
 function toast(msg) {
   const el = document.createElement('div');
@@ -373,7 +377,7 @@ function buildCardPpto(p) {
       <div>
         <div class="card-title">${p.proveedor}</div>
         <div class="card-sub">${p.descripcion}</div>
-        <div class="card-meta">📅 ${p.fecha} · ${p.moneda} · IVA ${p.ivaIncluido?'incluido':'+ 21%'} · Válido ${p.validezDias} días</div>
+        <div class="card-meta">📅 ${p.fecha} · ${p.moneda} · IVA ${p.tipoIva==='incluido'?'incluido':p.tipoIva==='10.5'?'+ 10.5%':'+ 21%'} · Válido ${p.validezDias} días</div>
       </div>
       <div style="text-align:right">
         ${badge(ep)}
@@ -555,8 +559,9 @@ function buildModal() {
       </div>
       <div class="field"><label class="field-label">IVA</label>
         <select id="m_iva">
-          <option value="neto" ${!d.ivaIncluido?'selected':''}>Precio + IVA (21%)</option>
-          <option value="incluido" ${d.ivaIncluido?'selected':''}>IVA incluido</option>
+          <option value="21" ${(!d.tipoIva||d.tipoIva==='21')?'selected':''}>Precio + IVA (21%)</option>
+          <option value="10.5" ${d.tipoIva==='10.5'?'selected':''}>Precio + IVA (10.5%)</option>
+          <option value="incluido" ${d.tipoIva==='incluido'?'selected':''}>IVA incluido</option>
         </select>
       </div>
       <div class="field"><label class="field-label">Validez (días)</label><input type="number" id="m_validez" value="${d.validezDias||30}"/></div>
@@ -574,7 +579,7 @@ function buildModal() {
     <button class="add-item-btn" id="addItem">+ Agregar ítem</button>
     <div class="total-box" id="total-box">
       <div class="total-row"><span>Subtotal neto:</span><span id="t-neto">${fmt(neto, d.moneda||'ARS')}</span></div>
-      ${!d.ivaIncluido?`<div class="total-row"><span>IVA 21%:</span><span id="t-iva">${fmt(neto*0.21, d.moneda||'ARS')}</span></div>`:''}
+      ${(d.tipoIva!=='incluido')?`<div class="total-row"><span>IVA ${d.tipoIva==='10.5'?'10.5':'21'}%:</span><span id="t-iva">${fmt(neto*(d.tipoIva==='10.5'?0.105:0.21), d.moneda||'ARS')}</span></div>`:''}
       <div class="total-final"><span>TOTAL c/IVA:</span><span id="t-total">${fmt(conIva, d.moneda||'ARS')}</span></div>
     </div>
     <div class="field"><label class="field-label">Notas / Condiciones</label><textarea id="m_notas">${d.notas||''}</textarea></div>
@@ -687,7 +692,7 @@ function saveFormState() {
     if(desc) state.editData.descripcion = desc.value;
     if(fecha) state.editData.fecha = fecha.value;
     if(moneda) state.editData.moneda = moneda.value;
-    if(iva) state.editData.ivaIncluido = iva.value === 'incluido';
+    if(iva) { state.editData.tipoIva = iva.value; state.editData.ivaIncluido = iva.value === 'incluido'; }
     if(validez) state.editData.validezDias = parseInt(validez.value) || 30;
     if(notas) state.editData.notas = notas.value;
     // Guardar items actuales
@@ -759,6 +764,7 @@ function handleClick(e) {
       fecha: document.getElementById('m_fecha')?.value,
       moneda: document.getElementById('m_moneda')?.value,
       ivaIncluido,
+        tipoIva,
       validezDias: parseInt(document.getElementById('m_validez')?.value)||30,
       items,
       notas: document.getElementById('m_notas')?.value || '',
@@ -830,22 +836,22 @@ function handleInput(e) {
 function handleChange(e) {
   const t = e.target;
   if(t.id === 'filtEst') { state.filtroEstado = t.value; render(); return; }
-  if(t.id === 'm_iva') { state.editData.ivaIncluido = t.value==='incluido'; updateTotals(); return; }
+  if(t.id === 'm_iva') { state.editData.tipoIva = t.value; state.editData.ivaIncluido = t.value==='incluido'; updateTotals(); return; }
   if(t.id === 'm_moneda') { state.editData.moneda = t.value; updateTotals(); return; }
 }
 
 function updateTotals() {
   const items = state.editData.items || [];
   const ivaIncEl = document.getElementById('m_iva');
-  const ivaIncluido = ivaIncEl ? ivaIncEl.value === 'incluido' : state.editData.ivaIncluido;
+  const tipoIva = ivaIncEl ? ivaIncEl.value : (state.editData.tipoIva || '21');
   const moneda = document.getElementById('m_moneda')?.value || state.editData.moneda || 'ARS';
-  const { neto, conIva } = calcTotales(items, ivaIncluido);
+  const { neto, conIva } = calcTotales(items, tipoIva==='incluido', tipoIva);
   const tn = document.getElementById('t-neto');
   const tt = document.getElementById('t-total');
   const ti = document.getElementById('t-iva');
   if(tn) tn.textContent = fmt(neto, moneda);
   if(tt) tt.textContent = fmt(conIva, moneda);
-  if(ti) ti.textContent = fmt(neto*0.21, moneda);
+  if(ti) { ti.textContent = fmt(neto*(tipoIva==='10.5'?0.105:0.21), moneda); }
 }
 
 function checkDiff() {
