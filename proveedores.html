@@ -755,8 +755,9 @@ function handleClick(e) {
     const desc = document.getElementById('m_descripcion')?.value.trim();
     if(!prov||!desc) { alert('Completá proveedor y descripción'); return; }
     const items = state.editData.items || [];
-    const ivaIncluido = document.getElementById('m_iva')?.value === 'incluido';
-    const { neto, conIva } = calcTotales(items, ivaIncluido);
+    const tipoIva = document.getElementById('m_iva')?.value || '21';
+    const ivaIncluido = tipoIva === 'incluido';
+    const { neto, conIva } = calcTotales(items, ivaIncluido, tipoIva);
     const data = {
       id: state.editData.id || null,
       proveedor: prov,
@@ -764,7 +765,7 @@ function handleClick(e) {
       fecha: document.getElementById('m_fecha')?.value,
       moneda: document.getElementById('m_moneda')?.value,
       ivaIncluido,
-        tipoIva,
+      tipoIva,
       validezDias: parseInt(document.getElementById('m_validez')?.value)||30,
       items,
       notas: document.getElementById('m_notas')?.value || '',
