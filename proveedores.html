@@ -479,6 +479,39 @@ function buildTabCta(proveedores) {
   if(proveedores.length === 0) return '<div class="empty"><div class="empty-icon">📊</div><div class="empty-text">No hay proveedores cargados aún.</div></div>';
   return `
   <div class="section-header"><div class="section-title">Cuenta Corriente por Proveedor</div></div>
+
+  ${(()=>{
+    const todosLosPptos = Object.values(state.presupuestos);
+    const totalGenPpto = todosLosPptos.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
+    const totalGenAb = todosLosPptos.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
+    const totalGenSaldo = totalGenPpto - totalGenAb;
+    const pctGen = totalGenPpto>0 ? Math.min(Math.round((totalGenAb/totalGenPpto)*100),100) : 0;
+    return `
+    <div style="background:linear-gradient(135deg,#1a1d35,#12162a);border:2px solid var(--accent);border-radius:16px;padding:20px;margin-bottom:24px">
+      <div style="font-family:'Syne',sans-serif;font-size:13px;color:var(--accent);letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;font-weight:700">📊 Resumen General</div>
+      <div class="montos" style="gap:24px">
+        <div class="monto-chip">
+          <div class="ml">Total Presupuestado</div>
+          <div class="mv" style="color:var(--accent);font-size:18px">$ ${new Intl.NumberFormat('es-AR',{minimumFractionDigits:2}).format(totalGenPpto)}</div>
+        </div>
+        <div class="monto-chip">
+          <div class="ml">Total Abonado</div>
+          <div class="mv" style="color:var(--green);font-size:18px">$ ${new Intl.NumberFormat('es-AR',{minimumFractionDigits:2}).format(totalGenAb)}</div>
+        </div>
+        <div class="monto-chip">
+          <div class="ml">Saldo Total Pendiente</div>
+          <div class="mv" style="color:${totalGenSaldo>1?'var(--yellow)':'var(--green)'};font-size:18px">$ ${new Intl.NumberFormat('es-AR',{minimumFractionDigits:2}).format(Math.max(totalGenSaldo,0))}</div>
+        </div>
+        <div class="monto-chip">
+          <div class="ml">Proveedores</div>
+          <div class="mv" style="color:var(--purple);font-size:18px">${proveedores.length}</div>
+        </div>
+      </div>
+      <div class="progress-wrap" style="margin-top:16px"><div class="progress-bar" style="width:${pctGen}%;background:${totalGenSaldo<=1?'var(--green)':'linear-gradient(90deg,var(--accent),var(--green))'}"></div></div>
+      <div class="progress-pct">${pctGen}% abonado del total</div>
+    </div>`;
+  })()}
+
   ${proveedores.map(prov => {
     const pptos = Object.values(state.presupuestos).filter(p=>p.proveedor===prov);
     const moneda = pptos[0]?.moneda||'ARS';
