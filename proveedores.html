@@ -440,6 +440,7 @@ function buildTabFacturas(facts) {
         ${f.notas ? `<div style="color:var(--dim);font-size:12px;margin-top:8px">📝 ${f.notas}</div>` : ''}
         <div class="card-actions">
           ${saldo>1 ? `<button class="btn-sm btn-pago" data-action="pago_factura" data-fid="${f.id}" data-pid="${f.presupuestoId}">💳 Registrar Pago</button>` : ''}
+          <button class="btn-sm btn-edit" data-action="edit_factura" data-id="${f.id}">✏ Editar Factura</button>
           <button class="btn-sm btn-delete" data-action="delete_factura" data-id="${f.id}">🗑 Eliminar Factura</button>
         </div>
       </div>`;
@@ -465,6 +466,7 @@ function buildTabPagos(pgs) {
             ${pg.notas ? `<div style="color:var(--dim);font-size:12px;margin-top:4px">📝 ${pg.notas}</div>` : ''}
           </div>
           <div class="card-actions">
+            <button class="btn-sm btn-edit" data-action="edit_pago" data-id="${pg.id}">✏ Editar Pago</button>
             <button class="btn-sm btn-delete" data-action="delete_pago" data-id="${pg.id}">🗑 Eliminar Pago</button>
           </div>
         </div>
@@ -603,7 +605,7 @@ function buildModal() {
       <div class="field"><label class="field-label">Fecha Factura</label><input type="date" id="f_fecha" value="${hoy()}"/></div>
     </div>
     <div class="grid-2">
-      <div class="field"><label class="field-label">Monto Facturado</label><input type="number" id="f_monto" value="${ppto?.totalConIva||''}"/></div>
+      <div class="field"><label class="field-label">Monto Facturado</label><input type="number" id="f_monto" value="${(()=>{ const yaFact=Object.values(state.facturas).filter(f=>f.presupuestoId===d.presupuestoId).reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0); const saldoFact=(parseFloat(ppto?.totalConIva)||0)-yaFact; return saldoFact>0?saldoFact:''; })()}"/></div>
       <div class="field"><label class="field-label">Moneda</label>
         <select id="f_moneda">
           <option value="ARS" ${ppto?.moneda!=='USD'?'selected':''}>$ Pesos ARS</option>
@@ -655,6 +657,73 @@ function buildModal() {
     <div class="modal-footer">
       <button class="btn btn-dark" id="modalClose">Cancelar</button>
       <button class="btn btn-green" id="savePago">💳 Asentar Pago</button>
+    </div>`;
+  }
+
+  // ── EDITAR FACTURA
+  if(m === 'editar_factura') {
+    const ppto = state.presupuestos[d.presupuestoId];
+    title = 'Editar Factura';
+    content = `
+    <div class="alert-info">
+      <div style="color:var(--muted);font-size:12px;margin-bottom:4px">Presupuesto asociado</div>
+      <div style="font-weight:600">${ppto?.proveedor||'—'} — ${ppto?.descripcion||'—'}</div>
+      <div style="color:var(--accent);font-weight:700;margin-top:4px">Total ppto: ${fmt(ppto?.totalConIva, ppto?.moneda)}</div>
+    </div>
+    <div class="grid-2">
+      <div class="field"><label class="field-label">Nro. Factura</label><input id="f_nro" value="${d.nroFactura||''}"/></div>
+      <div class="field"><label class="field-label">Fecha Factura</label><input type="date" id="f_fecha" value="${d.fechaFactura||hoy()}"/></div>
+    </div>
+    <div class="grid-2">
+      <div class="field"><label class="field-label">Monto Facturado</label><input type="number" id="f_monto" value="${d.montoFacturado||''}"/></div>
+      <div class="field"><label class="field-label">Moneda</label>
+        <select id="f_moneda">
+          <option value="ARS" ${d.moneda!=='USD'?'selected':''}>$ Pesos ARS</option>
+          <option value="USD" ${d.moneda==='USD'?'selected':''}>U$D Banco Nación</option>
+        </select>
+      </div>
+    </div>
+    <div id="diff-alert"></div>
+    <div class="field"><label class="field-label">Notas</label><textarea id="f_notas">${d.notas||''}</textarea></div>
+    <div class="modal-footer">
+      <button class="btn btn-dark" id="modalClose">Cancelar</button>
+      <button class="btn btn-accent" id="updateFactura">Guardar Cambios</button>
+    </div>`;
+  }
+
+  // ── EDITAR PAGO
+  if(m === 'editar_pago') {
+    const ppto = state.presupuestos[d.presupuestoId];
+    const factura = d.facturaId ? state.facturas[d.facturaId] : null;
+    const moneda = d.moneda || ppto?.moneda || 'ARS';
+    title = 'Editar Pago';
+    content = `
+    <div class="alert-info">
+      <div style="color:var(--muted);font-size:12px;margin-bottom:4px">Pago a</div>
+      <div style="font-weight:600">${ppto?.proveedor||'—'}</div>
+      ${factura?`<div style="color:var(--muted);font-size:13px">Factura: ${factura.nroFactura}</div>`:''}
+    </div>
+    <div class="grid-2">
+      <div class="field"><label class="field-label">Fecha de Pago</label><input type="date" id="p_fecha" value="${d.fechaPago||hoy()}"/></div>
+      <div class="field"><label class="field-label">Monto Abonado</label><input type="number" id="p_monto" value="${d.monto||''}"/></div>
+    </div>
+    <div class="grid-2">
+      <div class="field"><label class="field-label">Forma de Pago</label>
+        <select id="p_forma">
+          <option value="transferencia" ${d.formaPago==='transferencia'?'selected':''}>Transferencia</option>
+          <option value="cheque" ${d.formaPago==='cheque'?'selected':''}>Cheque</option>
+          <option value="efectivo" ${d.formaPago==='efectivo'?'selected':''}>Efectivo</option>
+          <option value="debito" ${d.formaPago==='debito'?'selected':''}>Débito</option>
+          <option value="credito" ${d.formaPago==='credito'?'selected':''}>Crédito</option>
+        </select>
+      </div>
+      <div class="field"><label class="field-label">Banco / Entidad</label><input id="p_banco" value="${d.banco||''}"/></div>
+    </div>
+    <div class="field"><label class="field-label">Nro. Comprobante / Referencia</label><input id="p_comprobante" value="${d.comprobante||''}"/></div>
+    <div class="field"><label class="field-label">Notas</label><textarea id="p_notas">${d.notas||''}</textarea></div>
+    <div class="modal-footer">
+      <button class="btn btn-dark" id="modalClose">Cancelar</button>
+      <button class="btn btn-green" id="updatePago">💳 Guardar Cambios</button>
     </div>`;
   }
 
@@ -721,6 +790,8 @@ function handleClick(e) {
     const fid = t.dataset.fid;
     const pid = t.dataset.pid;
     if(action==='delete') { deletePpto(id); return; }
+    if(action==='edit_factura') { state.modal='editar_factura'; state.editData=JSON.parse(JSON.stringify(state.facturas[id])); render(); return; }
+    if(action==='edit_pago') { state.modal='editar_pago'; state.editData=JSON.parse(JSON.stringify(state.pagos[id])); render(); return; }
     if(action==='delete_factura') { deleteFactura(id); return; }
     if(action==='delete_pago') { deletePago(id); return; }
     if(action==='edit') { state.modal='editar_ppto'; state.editData=JSON.parse(JSON.stringify(state.presupuestos[id])); render(); return; }
@@ -833,6 +904,54 @@ function handleClick(e) {
       // Limpiar formulario pero mantener modal y presupuesto seleccionado
       state.editData = { presupuestoId: presupuestoIdPago };
       render();
+    });
+    return;
+  }
+
+  // Actualizar factura existente
+  if(t.id === 'updateFactura') {
+    const nro = document.getElementById('f_nro')?.value.trim();
+    const monto = parseFloat(document.getElementById('f_monto')?.value)||0;
+    if(!nro) { alert('Ingresá el número de factura'); return; }
+    const ppto = state.presupuestos[state.editData.presupuestoId];
+    const otrasFacturas = Object.values(state.facturas)
+      .filter(f => f.presupuestoId === state.editData.presupuestoId && f.id !== state.editData.id)
+      .reduce((s,f) => s + (parseFloat(f.montoFacturado)||0), 0);
+    const totalFacturado = otrasFacturas + monto;
+    const diff = totalFacturado - (parseFloat(ppto?.totalConIva)||0);
+    const updated = {
+      ...state.editData,
+      nroFactura: nro,
+      fechaFactura: document.getElementById('f_fecha')?.value,
+      montoFacturado: monto,
+      moneda: document.getElementById('f_moneda')?.value,
+      hayDiferencia: Math.abs(diff)>1,
+      diferencia: diff,
+      notas: document.getElementById('f_notas')?.value || '',
+    };
+    set(ref(db, 'facturas/'+updated.id), updated).then(() => {
+      toast('✅ Factura actualizada');
+      state.modal=null; state.editData=null;
+    });
+    return;
+  }
+
+  // Actualizar pago existente
+  if(t.id === 'updatePago') {
+    const monto = parseFloat(document.getElementById('p_monto')?.value)||0;
+    if(!monto) { alert('Ingresá el monto'); return; }
+    const updated = {
+      ...state.editData,
+      fechaPago: document.getElementById('p_fecha')?.value,
+      monto,
+      formaPago: document.getElementById('p_forma')?.value,
+      banco: document.getElementById('p_banco')?.value || '',
+      comprobante: document.getElementById('p_comprobante')?.value || '',
+      notas: document.getElementById('p_notas')?.value || '',
+    };
+    set(ref(db, 'pagos/'+updated.id), updated).then(() => {
+      toast('✅ Pago actualizado');
+      state.modal=null; state.editData=null;
     });
     return;
   }
