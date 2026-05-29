@@ -196,20 +196,40 @@ let state = {
   tcBna: null,
 };
 
-async function fetchTcBna() {
-  try {
-    const r = await fetch('https://api.bluelytics.com.ar/v2/latest');
-    const data = await r.json();
-    state.tcBna = parseFloat(data?.oficial?.value_sell) || null;
-    render();
-  } catch(e) { state.tcBna = null; }
-}
-fetchTcBna();
-
 // ─── FIREBASE LISTENERS ──────────────────────────────────────────────────
 onValue(ref(db, 'presupuestos'), snap => { state.presupuestos = snap.val() || {}; render(); });
 onValue(ref(db, 'facturas'), snap => { state.facturas = snap.val() || {}; render(); });
 onValue(ref(db, 'pagos'), snap => { state.pagos = snap.val() || {}; render(); });
+
+// TC BNA — se busca en segundo plano, no bloquea la carga
+async function fetchTcBna() {
+  const apis = [
+    async () => {
+      const r = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+      const d = await r.json();
+      // Usar dolar oficial aproximado desde otra fuente
+      return null; // fallback
+    },
+    async () => {
+      const r = await fetch('https://dolarapi.com/v1/dolares/oficial');
+      const d = await r.json();
+      return parseFloat(d?.venta) || null;
+    },
+    async () => {
+      const r = await fetch('https://api.bluelytics.com.ar/v2/latest');
+      const d = await r.json();
+      return parseFloat(d?.oficial?.value_sell) || null;
+    }
+  ];
+  for(const api of apis) {
+    try {
+      const tc = await api();
+      if(tc) { state.tcBna = tc; render(); return; }
+    } catch(e) {}
+  }
+  state.tcBna = null;
+}
+fetchTcBna();
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
