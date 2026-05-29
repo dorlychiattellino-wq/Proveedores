@@ -484,9 +484,9 @@ function buildTabPresupuestos(pptos) {
     ${activos.length > 0 ? activos.map(p => buildCardPpto(p)).join('') : ''}
     ${pagados.length > 0 ? `
       <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
-        <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:8px 0" onclick="window.toggleArchivados()">
-          <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700;color:var(--green)">✅ Presupuestos Cancelados (${pagados.length})</div>
-          <div style="color:var(--muted);font-size:12px">${state.archivadosAbiertos?'▼ Ocultar':'▶ Ver lista'}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:8px 0" data-action="toggle_archivados">
+          <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700;color:var(--green);pointer-events:none">✅ Presupuestos Cancelados (${pagados.length})</div>
+          <div style="color:var(--muted);font-size:12px;pointer-events:none">${state.archivadosAbiertos?'▼ Ocultar':'▶ Ver lista'}</div>
         </div>
         ${state.archivadosAbiertos ? `
           <div style="background:#0f1117;border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:8px">
@@ -499,7 +499,7 @@ function buildTabPresupuestos(pptos) {
                   <div style="color:var(--dim);font-size:11px;font-family:monospace">📅 ${p.fecha} · ${facts.length>0?'Fact: '+facts.map(f=>f.nroFactura).join(', '):'Sin factura'}${p.cerrado&&p.tcCierre?' · TC cierre: $'+p.tcCierre:''}</div>
                 </div>
                 <div style="color:var(--green);font-weight:700;font-size:13px;font-family:monospace">${p.cerrado?'✅ Abonado':'✅'} ${fmt(p.totalConIva, p.moneda)}</div>
-                <div style="display:flex;gap:4px" onclick="event.stopPropagation()">
+                <div style="display:flex;gap:4px">
                   ${p.cerrado ? `<button class="btn-sm" data-action="toggle_cerrar" data-id="${p.id}" style="font-size:11px;padding:4px 8px;background:#7c2d12;color:#fff">🔓</button>` : ''}
                   <button class="btn-sm btn-edit" data-action="edit" data-id="${p.id}" style="font-size:11px;padding:4px 8px">✏</button>
                   <button class="btn-sm btn-delete" data-action="delete" data-id="${p.id}" style="font-size:11px;padding:4px 8px">🗑</button>
@@ -1045,6 +1045,7 @@ function handleClick(e) {
     const pid = t.dataset.pid;
     if(action==='delete') { deletePpto(id); return; }
     if(action==='toggle_cerrar') { toggleCerrarPpto(id); return; }
+    if(action==='toggle_archivados') { state.archivadosAbiertos = !state.archivadosAbiertos; render(); return; }
     if(action==='edit_factura') { state.modal='editar_factura'; state.editData=JSON.parse(JSON.stringify(state.facturas[id])); render(); return; }
     if(action==='edit_pago') { state.modal='editar_pago'; state.editData=JSON.parse(JSON.stringify(state.pagos[id])); render(); return; }
     if(action==='delete_factura') { deleteFactura(id); return; }
