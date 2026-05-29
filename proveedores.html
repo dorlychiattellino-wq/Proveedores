@@ -387,6 +387,7 @@ function buildCardPpto(p) {
     <div class="montos">
       <div class="monto-chip"><div class="ml">Presupuesto</div><div class="mv" style="color:var(--accent)">${fmt(p.totalConIva, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Abonado</div><div class="mv" style="color:var(--green)">${fmt(abonado, p.moneda)}</div></div>
+      <div class="monto-chip"><div class="ml">Total Facturado</div><div class="mv" style="color:var(--purple)">${fmt(facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0), p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Saldo</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(saldo, p.moneda)}</div></div>
     </div>
     ${items.filter(it=>it.desc||it.precioUnit).length > 0 ? `
