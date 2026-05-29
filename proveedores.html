@@ -288,18 +288,43 @@ function getTcUltimoPago(pptoId) {
   return pagos[0]?.tcPago || null;
 }
 
-// Calcular saldo en pesos según estado: si cerrado usa TC último pago, si no usa TC del día
+// Calcular saldo en pesos según estado.
+// CERRADO: NC = (suma facturas USD × TC factura) − (suma pagos USD × TC pago real). Refleja la pérdida cambiaria real.
+// ABIERTO: simple conversión al TC del día.
 function saldoEnPesos(p) {
   if(p.moneda !== 'USD') return null;
-  const saldo = (parseFloat(p.totalConIva)||0) - getPagosDePresupuesto(p.id);
-  if(saldo <= 0) return 0;
-  // Si está cerrado, usar TC del último pago (queda fijo, ese es el monto de la NC)
+  const saldoUSD = (parseFloat(p.totalConIva)||0) - getPagosDePresupuesto(p.id);
+  if(saldoUSD <= 0) return 0;
+
   if(p.cerrado) {
-    const tcFijo = p.tcCierre || getTcUltimoPago(p.id) || state.tcBna;
-    return tcFijo ? saldo * tcFijo : null;
+    // Cálculo de NC en pesos: lo facturado al TC factura − lo pagado al TC del pago
+    const facturas = Object.values(state.facturas).filter(f => f.presupuestoId === p.id);
+    const pagos = Object.values(state.pagos).filter(pg => pg.presupuestoId === p.id);
+
+    // Pesos facturados: cada factura × su TC. Si no tiene TC, usar TC cierre como fallback.
+    const tcFallback = p.tcCierre || state.tcBna || 0;
+    const pesosFacturado = facturas.reduce((s,f) => {
+      const tc = parseFloat(f.tcFactura) || tcFallback;
+      return s + (parseFloat(f.montoFacturado)||0) * tc;
+    }, 0);
+
+    // Pesos pagados: cada pago × su TC pago. Si no tiene TC, usar fallback.
+    const pesosPagado = pagos.reduce((s,pg) => {
+      const tc = parseFloat(pg.tcPago) || tcFallback;
+      return s + (parseFloat(pg.monto)||0) * tc;
+    }, 0);
+
+    // Si no hay facturas cargadas, fallback: saldo USD × TC cierre (comportamiento anterior)
+    if(facturas.length === 0) {
+      return tcFallback ? saldoUSD * tcFallback : null;
+    }
+
+    const ncPesos = pesosFacturado - pesosPagado;
+    return ncPesos > 0 ? ncPesos : 0;
   }
-  // Si no está cerrado, usar TC del día
-  return state.tcBna ? saldo * state.tcBna : null;
+
+  // Abierto: simple conversión al TC del día
+  return state.tcBna ? saldoUSD * state.tcBna : null;
 }
 function badge(estado) {
   const map = { pendiente:'Pendiente', pagado:'Pagado', parcial:'Pago Parcial', facturado:'Facturado', sin_factura:'Sin Factura', diferencia:'Diferencia', vigente:'Vigente' };
@@ -343,7 +368,7 @@ async function toggleCerrarPpto(id) {
   if(!p.cerrado) {
     // Cerrar: guardar el TC del último pago para que quede fijo
     const tcUltimo = getTcUltimoPago(id) || state.tcBna;
-    const confirma = confirm('¿Marcar este presupuesto como ABONADO?\n\nSe usará el TC del último pago (' + (tcUltimo ? '$'+tcUltimo : 'sin TC') + ') para calcular el saldo en pesos para la Nota de Crédito.');
+    const confirma = confirm('¿Marcar este presupuesto como ABONADO?\n\nLa Nota de Crédito en pesos se calculará como:\n(Total facturado USD × TC factura) − (Total pagado USD × TC pago real)\n\nEsto refleja la diferencia cambiaria real.');
     if(!confirma) return;
     await set(ref(db, 'presupuestos/'+id), { ...p, cerrado: true, tcCierre: tcUltimo, fechaCierre: hoy() });
     toast('✅ Presupuesto marcado como abonado');
@@ -516,7 +541,7 @@ function buildCardPpto(p) {
       <div class="monto-chip"><div class="ml">Presupuesto</div><div class="mv" style="color:var(--accent)">${fmt(p.totalConIva, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Abonado</div><div class="mv" style="color:var(--green)">${fmt(abonado, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Total Facturado</div><div class="mv" style="color:var(--purple)">${fmt(facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0), p.moneda)}</div></div>
-      <div class="monto-chip"><div class="ml">Saldo${p.moneda==='USD'&&p.cerrado?' (TC fijo)':''}</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${(()=>{ if(p.moneda!=='USD') return fmt(saldo,p.moneda); const sp = saldoEnPesos(p); if(sp===null) return fmt(saldo,'USD'); return fmt(saldo,'USD') + ' <span style="color:var(--dim);font-size:11px;font-family:monospace">(' + fmt(sp,'ARS') + (p.cerrado&&p.tcCierre?' · TC $'+p.tcCierre+' fijo':'') + ')</span>'; })()}</div></div>
+      <div class="monto-chip"><div class="ml">Saldo${p.moneda==='USD'&&p.cerrado?' / NC en $':''}</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${(()=>{ if(p.moneda!=='USD') return fmt(saldo,p.moneda); const sp = saldoEnPesos(p); if(sp===null) return fmt(saldo,'USD'); return fmt(saldo,'USD') + ' <span style="color:var(--dim);font-size:11px;font-family:monospace">(' + (p.cerrado?'NC: ':'') + fmt(sp,'ARS') + (p.cerrado?' dif. cambiaria':'') + ')</span>'; })()}</div></div>
     </div>
     ${items.filter(it=>it.desc||it.precioUnit).length > 0 ? `
     <div class="items-detail">
@@ -667,7 +692,7 @@ function buildTabCta(proveedores) {
         <div class="monto-chip"><div class="ml">Total Abonado (${moneda})</div><div class="mv" style="color:var(--green)">${fmt(totalAb,moneda)}</div></div>
         ${moneda==='USD' ? `<div class="monto-chip"><div class="ml">Abonado en $ARS</div><div class="mv" style="color:var(--green);font-size:12px">${fmt(pagosProv.reduce((s,pg)=>s+(pg.montoPesos||0),0),'ARS')}</div></div>` : ''}
         <div class="monto-chip"><div class="ml">Saldo Pendiente (${moneda})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(Math.max(saldo,0),moneda)}</div></div>
-        ${moneda==='USD' && saldoEnPesosProv!==null ? `<div class="monto-chip"><div class="ml">Saldo en $ARS (NC)</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'};font-size:12px">${fmt(saldoEnPesosProv,'ARS')}</div></div>` : ''}
+        ${moneda==='USD' && saldoEnPesosProv!==null ? `<div class="monto-chip"><div class="ml">NC en $ARS</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'};font-size:12px">${fmt(saldoEnPesosProv,'ARS')}</div></div>` : ''}
       </div>
       <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%;background:${saldo<=1?'var(--green)':'linear-gradient(90deg,var(--accent),var(--green))'}"></div></div>
       <div class="progress-pct">${pct}% abonado</div>
@@ -684,7 +709,7 @@ function buildTabCta(proveedores) {
             </div>
             <div style="text-align:right">
               <div style="color:${sl<=1?'var(--green)':'var(--yellow)'};font-weight:700;font-size:13px;font-family:monospace">${sl<=1?(p.cerrado?'✅ Abonado':'✅ Pagado'):'Saldo: '+fmt(sl,p.moneda)}</div>
-              ${p.moneda==='USD'&&sl>1 ? `<div style="color:var(--dim);font-size:11px;font-family:monospace">${(()=>{ const sp=saldoEnPesos(p); return sp!==null ? '≈ '+fmt(sp,'ARS')+(p.cerrado&&p.tcCierre?' (TC $'+p.tcCierre+' fijo)':' (TC día)') : ''; })()}</div>` : ''}
+              ${p.moneda==='USD'&&sl>1 ? `<div style="color:var(--dim);font-size:11px;font-family:monospace">${(()=>{ const sp=saldoEnPesos(p); if(sp===null) return ''; return (p.cerrado?'NC: ':'≈ ')+fmt(sp,'ARS')+(p.cerrado?' (dif. cambiaria)':' (TC día)'); })()}</div>` : ''}
               <div style="color:var(--dim);font-size:11px">Ppto: ${fmt(p.totalConIva,p.moneda)}</div>
             </div>
           </div>`;
@@ -998,16 +1023,20 @@ function saveFormState() {
 }
 
 function handleClick(e) {
-  const t = e.target;
+  let t = e.target;
+
+  // Si hizo clic en un hijo de un botón con data-action, usar el botón padre
+  const actionEl = t.closest && t.closest('[data-action]');
+  if(actionEl) t = actionEl;
 
   // Tabs
-  if(t.classList.contains('tab-btn')) { state.tab = t.dataset.tab; render(); return; }
+  if(t.classList && t.classList.contains('tab-btn')) { state.tab = t.dataset.tab; render(); return; }
 
   // Nuevo presupuesto
   if(t.id === 'btnNuevoPpto') { state.modal='nuevo_ppto'; state.editData={items:[{desc:'',cantidad:1,precioUnit:''}]}; render(); return; }
 
   // Card actions
-  if(t.dataset.action) {
+  if(t.dataset && t.dataset.action) {
     const action = t.dataset.action;
     const id = t.dataset.id;
     const fid = t.dataset.fid;
@@ -1067,6 +1096,8 @@ function handleClick(e) {
       totalNeto: neto,
       totalConIva: conIva,
       estado: 'vigente',
+      // Preservar campos de cierre si el presupuesto estaba cerrado
+      ...(state.editData.cerrado ? { cerrado: true, tcCierre: state.editData.tcCierre, fechaCierre: state.editData.fechaCierre } : {}),
     };
     savePresupuesto(data).then(() => {
       // Limpiar formulario pero mantener modal abierto para seguir cargando
