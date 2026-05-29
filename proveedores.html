@@ -231,6 +231,16 @@ async function fetchTcBna() {
 }
 fetchTcBna();
 
+// Permitir ingresar TC manualmente desde el header
+window.actualizarTc = function(val) {
+  const tc = parseFloat(val);
+  if(tc > 0) {
+    state.tcBna = tc;
+    // Re-render solo si no estamos en un modal abierto (evita perder datos)
+    if(!state.modal) render();
+  }
+};
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
 const hoy = () => new Date().toISOString().slice(0,10);
@@ -354,7 +364,9 @@ function buildHeader(np, nf, npg) {
   <div class="header">
     <div>
       <div class="header-sub">GESTIÓN COMPARTIDA DE PROVEEDORES</div>
-      ${state.tcBna ? '<div style="font-family:monospace;font-size:11px;color:var(--yellow);margin-top:2px">💵 TC BNA Venta: $' + state.tcBna.toLocaleString("es-AR",{minimumFractionDigits:2}) + '</div>' : ''}
+      <div style="font-family:monospace;font-size:11px;color:var(--yellow);margin-top:4px;display:flex;align-items:center;gap:6px">
+        💵 TC BNA Venta: $<input type="number" id="tcManual" value="${state.tcBna||''}" placeholder="ingresar" style="width:90px;padding:2px 6px;background:#0f1117;border:1px solid var(--border);color:var(--yellow);border-radius:4px;font-family:monospace;font-size:11px" oninput="window.actualizarTc(this.value)"/>
+      </div>
       <div class="header-title">💼 Proveedores & Pagos</div>
     </div>
     <div class="stats">
@@ -426,7 +438,7 @@ function buildCardPpto(p) {
       <div class="monto-chip"><div class="ml">Presupuesto</div><div class="mv" style="color:var(--accent)">${fmt(p.totalConIva, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Abonado</div><div class="mv" style="color:var(--green)">${fmt(abonado, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Total Facturado</div><div class="mv" style="color:var(--purple)">${fmt(facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0), p.moneda)}</div></div>
-      <div class="monto-chip"><div class="ml">Saldo</div><div class="mv" style="color:${saldo>1?'var(--yellow)':\'var(--green)'}">${p.moneda==='USD'&&state.tcBna ? fmtDual(saldo,state.tcBna) : fmt(saldo,p.moneda)}</div></div>
+      <div class="monto-chip"><div class="ml">Saldo</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${p.moneda==='USD'&&state.tcBna ? fmtDual(saldo,state.tcBna) : fmt(saldo,p.moneda)}</div></div>
     </div>
     ${items.filter(it=>it.desc||it.precioUnit).length > 0 ? `
     <div class="items-detail">
