@@ -271,11 +271,35 @@ function getPagosDeFactura(factId) {
 }
 function estadoPago(pptoId) {
   const p = state.presupuestos[pptoId]; if(!p) return 'pendiente';
+  // Si fue marcado como cerrado manualmente
+  if(p.cerrado) return 'pagado';
   const total = parseFloat(p.totalConIva)||0;
   const ab = getPagosDePresupuesto(pptoId);
   if(ab >= total - 1) return 'pagado';
   if(ab > 0) return 'parcial';
   return 'pendiente';
+}
+
+// Obtener TC del último pago de un presupuesto (para saldo en pesos al cerrar)
+function getTcUltimoPago(pptoId) {
+  const pagos = Object.values(state.pagos)
+    .filter(pg => pg.presupuestoId === pptoId && pg.tcPago)
+    .sort((a,b) => (b.fechaPago||'').localeCompare(a.fechaPago||''));
+  return pagos[0]?.tcPago || null;
+}
+
+// Calcular saldo en pesos según estado: si cerrado usa TC último pago, si no usa TC del día
+function saldoEnPesos(p) {
+  if(p.moneda !== 'USD') return null;
+  const saldo = (parseFloat(p.totalConIva)||0) - getPagosDePresupuesto(p.id);
+  if(saldo <= 0) return 0;
+  // Si está cerrado, usar TC del último pago (queda fijo, ese es el monto de la NC)
+  if(p.cerrado) {
+    const tcFijo = p.tcCierre || getTcUltimoPago(p.id) || state.tcBna;
+    return tcFijo ? saldo * tcFijo : null;
+  }
+  // Si no está cerrado, usar TC del día
+  return state.tcBna ? saldo * state.tcBna : null;
 }
 function badge(estado) {
   const map = { pendiente:'Pendiente', pagado:'Pagado', parcial:'Pago Parcial', facturado:'Facturado', sin_factura:'Sin Factura', diferencia:'Diferencia', vigente:'Vigente' };
@@ -313,6 +337,24 @@ async function savePago(data) {
   await set(ref(db, `pagos/${id}`), { ...data, id });
   toast('💳 Pago asentado');
 }
+async function toggleCerrarPpto(id) {
+  const p = state.presupuestos[id];
+  if(!p) return;
+  if(!p.cerrado) {
+    // Cerrar: guardar el TC del último pago para que quede fijo
+    const tcUltimo = getTcUltimoPago(id) || state.tcBna;
+    const confirma = confirm('¿Marcar este presupuesto como ABONADO?\n\nSe usará el TC del último pago (' + (tcUltimo ? '$'+tcUltimo : 'sin TC') + ') para calcular el saldo en pesos para la Nota de Crédito.');
+    if(!confirma) return;
+    await set(ref(db, 'presupuestos/'+id), { ...p, cerrado: true, tcCierre: tcUltimo, fechaCierre: hoy() });
+    toast('✅ Presupuesto marcado como abonado');
+  } else {
+    if(!confirm('¿Reabrir este presupuesto? Volverá a calcularse el saldo con el TC del día.')) return;
+    const { cerrado, tcCierre, fechaCierre, ...rest } = p;
+    await set(ref(db, 'presupuestos/'+id), rest);
+    toast('🔓 Presupuesto reabierto');
+  }
+}
+
 async function deletePpto(id) {
   if(!confirm("Eliminar este presupuesto? Tambien se eliminaran sus facturas y pagos asociados.")) return;
   const pagoIds = Object.values(state.pagos).filter(p=>p.presupuestoId===id).map(p=>p.id);
@@ -473,7 +515,7 @@ function buildCardPpto(p) {
       <div class="monto-chip"><div class="ml">Presupuesto</div><div class="mv" style="color:var(--accent)">${fmt(p.totalConIva, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Abonado</div><div class="mv" style="color:var(--green)">${fmt(abonado, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Total Facturado</div><div class="mv" style="color:var(--purple)">${fmt(facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0), p.moneda)}</div></div>
-      <div class="monto-chip"><div class="ml">Saldo</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${p.moneda==='USD'&&state.tcBna ? fmtDual(saldo,state.tcBna) : fmt(saldo,p.moneda)}</div></div>
+      <div class="monto-chip"><div class="ml">Saldo${p.moneda==='USD'&&p.cerrado?' (TC fijo)':''}</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${(()=>{ if(p.moneda!=='USD') return fmt(saldo,p.moneda); const sp = saldoEnPesos(p); if(sp===null) return fmt(saldo,'USD'); return fmt(saldo,'USD') + ' <span style="color:var(--dim);font-size:11px;font-family:monospace">(' + fmt(sp,'ARS') + (p.cerrado&&p.tcCierre?' · TC $'+p.tcCierre+' fijo':'') + ')</span>'; })()}</div></div>
     </div>
     ${items.filter(it=>it.desc||it.precioUnit).length > 0 ? `
     <div class="items-detail">
@@ -487,6 +529,7 @@ function buildCardPpto(p) {
     <div class="card-actions">
       <button class="btn-sm btn-factura" data-action="factura" data-id="${p.id}">🧾 Cargar Factura</button>
       <button class="btn-sm btn-pago" data-action="pago" data-id="${p.id}">💳 Registrar Pago</button>
+      <button class="btn-sm" data-action="toggle_cerrar" data-id="${p.id}" style="background:${p.cerrado?'#7c2d12':'#14532d'};color:#fff">${p.cerrado?'🔓 Reabrir':'✅ Marcar Abonado'}</button>
       <button class="btn-sm btn-edit" data-action="edit" data-id="${p.id}">✏ Editar</button>
       <button class="btn-sm btn-delete" data-action="delete" data-id="${p.id}">🗑</button>
     </div>
@@ -604,6 +647,8 @@ function buildTabCta(proveedores) {
     const totalPpto = pptos.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
     const totalAb = pptos.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
     const saldo = totalPpto - totalAb;
+    // Saldo en pesos: cada ppto USD usa su TC correcto (fijo si cerrado, día si no)
+    const saldoEnPesosProv = moneda==='USD' ? pptos.reduce((s,p)=>{ const sp = saldoEnPesos(p); return s + (sp||0); }, 0) : null;
     const pct = totalPpto > 0 ? Math.min(Math.round((totalAb/totalPpto)*100),100) : 0;
     const ep = saldo<=1?'pagado':totalAb>0?'parcial':'pendiente';
     const pagosProv = Object.values(state.pagos).filter(pg=>pptos.some(p=>p.id===pg.presupuestoId));
@@ -620,7 +665,8 @@ function buildTabCta(proveedores) {
         <div class="monto-chip"><div class="ml">Total Presupuestado</div><div class="mv" style="color:var(--accent)">${fmt(totalPpto,moneda)}</div></div>
         <div class="monto-chip"><div class="ml">Total Abonado (${moneda})</div><div class="mv" style="color:var(--green)">${fmt(totalAb,moneda)}</div></div>
         ${moneda==='USD' ? `<div class="monto-chip"><div class="ml">Abonado en $ARS</div><div class="mv" style="color:var(--green);font-size:12px">${fmt(pagosProv.reduce((s,pg)=>s+(pg.montoPesos||0),0),'ARS')}</div></div>` : ''}
-        <div class="monto-chip"><div class="ml">Saldo Pendiente</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(Math.max(saldo,0),moneda)}</div></div>
+        <div class="monto-chip"><div class="ml">Saldo Pendiente (${moneda})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(Math.max(saldo,0),moneda)}</div></div>
+        ${moneda==='USD' && saldoEnPesosProv!==null ? `<div class="monto-chip"><div class="ml">Saldo en $ARS (NC)</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'};font-size:12px">${fmt(saldoEnPesosProv,'ARS')}</div></div>` : ''}
       </div>
       <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%;background:${saldo<=1?'var(--green)':'linear-gradient(90deg,var(--accent),var(--green))'}"></div></div>
       <div class="progress-pct">${pct}% abonado</div>
@@ -636,7 +682,8 @@ function buildTabCta(proveedores) {
               <div style="color:var(--dim);font-size:11px;font-family:monospace">${p.fecha} · ${facts.length>0?'Factura: '+facts.map(f=>f.nroFactura).join(', '):'Sin factura'}</div>
             </div>
             <div style="text-align:right">
-              <div style="color:${sl<=1?'var(--green)':'var(--yellow)'};font-weight:700;font-size:13px;font-family:monospace">${sl<=1?'✅ Pagado':'Saldo: '+fmt(sl,p.moneda)}</div>
+              <div style="color:${sl<=1?'var(--green)':'var(--yellow)'};font-weight:700;font-size:13px;font-family:monospace">${sl<=1?(p.cerrado?'✅ Abonado':'✅ Pagado'):'Saldo: '+fmt(sl,p.moneda)}</div>
+              ${p.moneda==='USD'&&sl>1 ? `<div style="color:var(--dim);font-size:11px;font-family:monospace">${(()=>{ const sp=saldoEnPesos(p); return sp!==null ? '≈ '+fmt(sp,'ARS')+(p.cerrado&&p.tcCierre?' (TC $'+p.tcCierre+' fijo)':' (TC día)') : ''; })()}</div>` : ''}
               <div style="color:var(--dim);font-size:11px">Ppto: ${fmt(p.totalConIva,p.moneda)}</div>
             </div>
           </div>`;
@@ -965,6 +1012,7 @@ function handleClick(e) {
     const fid = t.dataset.fid;
     const pid = t.dataset.pid;
     if(action==='delete') { deletePpto(id); return; }
+    if(action==='toggle_cerrar') { toggleCerrarPpto(id); return; }
     if(action==='edit_factura') { state.modal='editar_factura'; state.editData=JSON.parse(JSON.stringify(state.facturas[id])); render(); return; }
     if(action==='edit_pago') { state.modal='editar_pago'; state.editData=JSON.parse(JSON.stringify(state.pagos[id])); render(); return; }
     if(action==='delete_factura') { deleteFactura(id); return; }
