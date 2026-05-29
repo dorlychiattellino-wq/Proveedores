@@ -468,13 +468,14 @@ function buildTabPresupuestos(pptos) {
             ${pagados.map(p => {
               const facts = getFacturasDePresupuesto(p.id);
               return `
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #1e2235;flex-wrap:wrap;gap:6px" onclick="event.stopPropagation()">
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #1e2235;flex-wrap:wrap;gap:6px">
                 <div style="flex:1;min-width:200px">
                   <div style="color:var(--text);font-size:13px;font-weight:600">${p.proveedor} — ${p.descripcion}</div>
-                  <div style="color:var(--dim);font-size:11px;font-family:monospace">📅 ${p.fecha} · ${facts.length>0?'Fact: '+facts.map(f=>f.nroFactura).join(', '):'Sin factura'}</div>
+                  <div style="color:var(--dim);font-size:11px;font-family:monospace">📅 ${p.fecha} · ${facts.length>0?'Fact: '+facts.map(f=>f.nroFactura).join(', '):'Sin factura'}${p.cerrado&&p.tcCierre?' · TC cierre: $'+p.tcCierre:''}</div>
                 </div>
-                <div style="color:var(--green);font-weight:700;font-size:13px;font-family:monospace">✅ ${fmt(p.totalConIva, p.moneda)}</div>
-                <div style="display:flex;gap:4px">
+                <div style="color:var(--green);font-weight:700;font-size:13px;font-family:monospace">${p.cerrado?'✅ Abonado':'✅'} ${fmt(p.totalConIva, p.moneda)}</div>
+                <div style="display:flex;gap:4px" onclick="event.stopPropagation()">
+                  ${p.cerrado ? `<button class="btn-sm" data-action="toggle_cerrar" data-id="${p.id}" style="font-size:11px;padding:4px 8px;background:#7c2d12;color:#fff">🔓</button>` : ''}
                   <button class="btn-sm btn-edit" data-action="edit" data-id="${p.id}" style="font-size:11px;padding:4px 8px">✏</button>
                   <button class="btn-sm btn-delete" data-action="delete" data-id="${p.id}" style="font-size:11px;padding:4px 8px">🗑</button>
                 </div>
