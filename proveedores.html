@@ -189,11 +189,22 @@ let state = {
   presupuestos: {},
   facturas: {},
   pagos: {},
-  modal: null, // 'nuevo_ppto' | 'editar_ppto' | 'factura' | 'pago'
+  modal: null,
   editData: null,
   filtroProveedor: '',
   filtroEstado: 'todos',
+  tcBna: null,
 };
+
+async function fetchTcBna() {
+  try {
+    const r = await fetch('https://api.bluelytics.com.ar/v2/latest');
+    const data = await r.json();
+    state.tcBna = parseFloat(data?.oficial?.value_sell) || null;
+    render();
+  } catch(e) { state.tcBna = null; }
+}
+fetchTcBna();
 
 // ─── FIREBASE LISTENERS ──────────────────────────────────────────────────
 onValue(ref(db, 'presupuestos'), snap => { state.presupuestos = snap.val() || {}; render(); });
@@ -211,6 +222,12 @@ function fmt(n, moneda) {
     currency: moneda === 'USD' ? 'USD' : 'ARS',
     minimumFractionDigits: 2
   }).format(num);
+}
+
+function fmtDual(usd, tc) {
+  if(!tc || usd == null) return fmt(usd,'USD');
+  const pesos = usd * tc;
+  return fmt(usd,'USD') + ' <span style="color:var(--dim);font-size:11px;font-family:monospace">(' + fmt(pesos,'ARS') + ')</span>';
 }
 
 function getPagosDePresupuesto(pptoId) {
@@ -317,6 +334,7 @@ function buildHeader(np, nf, npg) {
   <div class="header">
     <div>
       <div class="header-sub">GESTIÓN COMPARTIDA DE PROVEEDORES</div>
+      ${state.tcBna ? '<div style="font-family:monospace;font-size:11px;color:var(--yellow);margin-top:2px">💵 TC BNA Venta: $' + state.tcBna.toLocaleString("es-AR",{minimumFractionDigits:2}) + '</div>' : ''}
       <div class="header-title">💼 Proveedores & Pagos</div>
     </div>
     <div class="stats">
@@ -388,7 +406,7 @@ function buildCardPpto(p) {
       <div class="monto-chip"><div class="ml">Presupuesto</div><div class="mv" style="color:var(--accent)">${fmt(p.totalConIva, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Abonado</div><div class="mv" style="color:var(--green)">${fmt(abonado, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Total Facturado</div><div class="mv" style="color:var(--purple)">${fmt(facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0), p.moneda)}</div></div>
-      <div class="monto-chip"><div class="ml">Saldo</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(saldo, p.moneda)}</div></div>
+      <div class="monto-chip"><div class="ml">Saldo</div><div class="mv" style="color:${saldo>1?'var(--yellow)':\'var(--green)'}">${p.moneda==='USD'&&state.tcBna ? fmtDual(saldo,state.tcBna) : fmt(saldo,p.moneda)}</div></div>
     </div>
     ${items.filter(it=>it.desc||it.precioUnit).length > 0 ? `
     <div class="items-detail">
@@ -460,7 +478,7 @@ function buildTabPagos(pgs) {
       <div class="card pago-card">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <div>
-            <div style="color:var(--green);font-weight:700;font-size:15px">✅ ${fmt(pg.monto, pg.moneda)}</div>
+            <div style="color:var(--green);font-weight:700;font-size:15px">✅ ${fmt(pg.monto, pg.moneda)}${pg.montoPesos ? ' <span style="color:var(--dim);font-size:12px;font-family:monospace">(' + fmt(pg.montoPesos,'ARS') + ' · TC $' + pg.tcPago + ')</span>' : ''}</div>
             <div class="card-sub">${ppto?.proveedor||'—'}${fact?` · Factura ${fact.nroFactura}`:''}</div>
             <div class="card-meta">📅 ${pg.fechaPago} · ${pg.formaPago}${pg.banco?' · '+pg.banco:''}</div>
             ${pg.comprobante ? `<div style="color:var(--accent);font-size:12px;font-family:monospace;margin-top:4px">🔖 ${pg.comprobante}</div>` : ''}
@@ -533,7 +551,8 @@ function buildTabCta(proveedores) {
       </div>
       <div class="montos">
         <div class="monto-chip"><div class="ml">Total Presupuestado</div><div class="mv" style="color:var(--accent)">${fmt(totalPpto,moneda)}</div></div>
-        <div class="monto-chip"><div class="ml">Total Abonado</div><div class="mv" style="color:var(--green)">${fmt(totalAb,moneda)}</div></div>
+        <div class="monto-chip"><div class="ml">Total Abonado (${moneda})</div><div class="mv" style="color:var(--green)">${fmt(totalAb,moneda)}</div></div>
+        ${moneda==='USD' ? `<div class="monto-chip"><div class="ml">Abonado en $ARS</div><div class="mv" style="color:var(--green);font-size:12px">${fmt(pagosProv.reduce((s,pg)=>s+(pg.montoPesos||0),0),'ARS')}</div></div>` : ''}
         <div class="monto-chip"><div class="ml">Saldo Pendiente</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(Math.max(saldo,0),moneda)}</div></div>
       </div>
       <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%;background:${saldo<=1?'var(--green)':'linear-gradient(90deg,var(--accent),var(--green))'}"></div></div>
@@ -679,8 +698,13 @@ function buildModal() {
     </div>
     <div class="grid-2">
       <div class="field"><label class="field-label">Fecha de Pago</label><input type="date" id="p_fecha" value="${hoy()}"/></div>
-      <div class="field"><label class="field-label">Monto Abonado</label><input type="number" id="p_monto" value="${saldo>0?saldo:''}"/></div>
+      <div class="field"><label class="field-label">Monto Abonado (${moneda})</label><input type="number" id="p_monto" value="${saldo>0?saldo:''}" oninput="calcPesosPago()"/></div>
     </div>
+    ${moneda==='USD' ? `
+    <div class="grid-2">
+      <div class="field"><label class="field-label">TC BNA Vendedor</label><input type="number" id="p_tc" value="${state.tcBna||''}" placeholder="Ej: 1430" oninput="calcPesosPago()"/></div>
+      <div class="field"><label class="field-label">Equivalente en Pesos</label><input type="number" id="p_pesos" placeholder="Se calcula automático" readonly style="background:#0a0d1a;color:var(--green);font-weight:700"/></div>
+    </div>` : ''}
     <div class="grid-2">
       <div class="field"><label class="field-label">Forma de Pago</label>
         <select id="p_forma">
@@ -746,8 +770,13 @@ function buildModal() {
     </div>
     <div class="grid-2">
       <div class="field"><label class="field-label">Fecha de Pago</label><input type="date" id="p_fecha" value="${d.fechaPago||hoy()}"/></div>
-      <div class="field"><label class="field-label">Monto Abonado</label><input type="number" id="p_monto" value="${d.monto||''}"/></div>
+      <div class="field"><label class="field-label">Monto Abonado (${moneda})</label><input type="number" id="p_monto" value="${d.monto||''}" oninput="calcPesosPago()"/></div>
     </div>
+    ${moneda==='USD' ? `
+    <div class="grid-2">
+      <div class="field"><label class="field-label">TC BNA Vendedor</label><input type="number" id="p_tc" value="${d.tcPago||state.tcBna||''}" placeholder="Ej: 1430" oninput="calcPesosPago()"/></div>
+      <div class="field"><label class="field-label">Equivalente en Pesos</label><input type="number" id="p_pesos" value="${d.montoPesos||''}" placeholder="Se calcula automático" readonly style="background:#0a0d1a;color:var(--green);font-weight:700"/></div>
+    </div>` : ''}
     <div class="grid-2">
       <div class="field"><label class="field-label">Forma de Pago</label>
         <select id="p_forma">
@@ -931,11 +960,15 @@ function handleClick(e) {
     const ppto = state.presupuestos[state.editData.presupuestoId];
     const fact = state.editData.facturaId ? state.facturas[state.editData.facturaId] : null;
     const presupuestoIdPago = state.editData.presupuestoId;
+    const tcPago = parseFloat(document.getElementById('p_tc')?.value) || null;
+    const montoPesos = tcPago ? monto * tcPago : null;
     savePago({
       presupuestoId: presupuestoIdPago,
       facturaId: state.editData.facturaId || null,
       fechaPago: document.getElementById('p_fecha')?.value,
       monto,
+      tcPago,
+      montoPesos,
       formaPago: document.getElementById('p_forma')?.value,
       banco: document.getElementById('p_banco')?.value || '',
       comprobante: document.getElementById('p_comprobante')?.value || '',
@@ -981,10 +1014,13 @@ function handleClick(e) {
   if(t.id === 'updatePago') {
     const monto = parseFloat(document.getElementById('p_monto')?.value)||0;
     if(!monto) { alert('Ingresá el monto'); return; }
+    const tcPagoU = parseFloat(document.getElementById('p_tc')?.value) || null;
     const updated = {
       ...state.editData,
       fechaPago: document.getElementById('p_fecha')?.value,
       monto,
+      tcPago: tcPagoU,
+      montoPesos: tcPagoU ? monto * tcPagoU : null,
       formaPago: document.getElementById('p_forma')?.value,
       banco: document.getElementById('p_banco')?.value || '',
       comprobante: document.getElementById('p_comprobante')?.value || '',
@@ -1035,6 +1071,13 @@ function updateTotals() {
   if(ti) { ti.textContent = fmt(neto*(tipoIva==='10.5'?0.105:0.21), moneda); }
   const tiLabel = document.getElementById('t-iva-label');
   if(tiLabel) tiLabel.textContent = 'IVA ' + (tipoIva==='10.5'?'10.5':'21') + '%:';
+}
+
+function calcPesosPago() {
+  const monto = parseFloat(document.getElementById('p_monto')?.value) || 0;
+  const tc = parseFloat(document.getElementById('p_tc')?.value) || 0;
+  const pesosEl = document.getElementById('p_pesos');
+  if(pesosEl && tc > 0) pesosEl.value = (monto * tc).toFixed(2);
 }
 
 function checkDiff() {
