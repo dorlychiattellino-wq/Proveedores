@@ -643,33 +643,55 @@ function buildTabCta(proveedores) {
 
   ${(()=>{
     const todosLosPptos = Object.values(state.presupuestos);
-    const totalGenPpto = todosLosPptos.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
-    const totalGenAb = todosLosPptos.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
-    const totalGenSaldo = totalGenPpto - totalGenAb;
-    const pctGen = totalGenPpto>0 ? Math.min(Math.round((totalGenAb/totalGenPpto)*100),100) : 0;
+    // Separar por moneda
+    const pptosArs = todosLosPptos.filter(p => p.moneda !== 'USD');
+    const pptosUsd = todosLosPptos.filter(p => p.moneda === 'USD');
+
+    const totalArs = pptosArs.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
+    const abArs = pptosArs.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
+    const saldoArs = totalArs - abArs;
+
+    const totalUsd = pptosUsd.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
+    const abUsd = pptosUsd.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
+    const saldoUsd = totalUsd - abUsd;
+    // Saldo USD convertido a pesos al TC del día
+    const saldoUsdEnArs = state.tcBna ? saldoUsd * state.tcBna : null;
+
+    // % global ponderado (en pesos equivalente)
+    const totalPesosEquiv = totalArs + (state.tcBna ? totalUsd * state.tcBna : 0);
+    const abPesosEquiv = abArs + (state.tcBna ? abUsd * state.tcBna : 0);
+    const pctGen = totalPesosEquiv>0 ? Math.min(Math.round((abPesosEquiv/totalPesosEquiv)*100),100) : 0;
+
     return `
     <div style="background:linear-gradient(135deg,#1a1d35,#12162a);border:2px solid var(--accent);border-radius:16px;padding:20px;margin-bottom:24px">
       <div style="font-family:'Syne',sans-serif;font-size:13px;color:var(--accent);letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;font-weight:700">📊 Resumen General</div>
+
+      ${totalArs > 0 ? `
+      <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="color:var(--muted);font-size:11px;font-family:monospace;letter-spacing:1px;margin-bottom:8px">💵 PRESUPUESTOS EN PESOS (ARS)</div>
+        <div class="montos" style="gap:24px">
+          <div class="monto-chip"><div class="ml">Presupuestado</div><div class="mv" style="color:var(--accent);font-size:16px">${fmt(totalArs,'ARS')}</div></div>
+          <div class="monto-chip"><div class="ml">Abonado</div><div class="mv" style="color:var(--green);font-size:16px">${fmt(abArs,'ARS')}</div></div>
+          <div class="monto-chip"><div class="ml">Saldo Pendiente</div><div class="mv" style="color:${saldoArs>1?'var(--yellow)':'var(--green)'};font-size:16px">${fmt(Math.max(saldoArs,0),'ARS')}</div></div>
+        </div>
+      </div>` : ''}
+
+      ${totalUsd > 0 ? `
+      <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="color:var(--muted);font-size:11px;font-family:monospace;letter-spacing:1px;margin-bottom:8px">💵 PRESUPUESTOS EN DÓLARES (USD)${state.tcBna ? ' · TC día $'+state.tcBna : ''}</div>
+        <div class="montos" style="gap:24px">
+          <div class="monto-chip"><div class="ml">Presupuestado USD</div><div class="mv" style="color:var(--accent);font-size:16px">${fmt(totalUsd,'USD')}</div></div>
+          <div class="monto-chip"><div class="ml">Abonado USD</div><div class="mv" style="color:var(--green);font-size:16px">${fmt(abUsd,'USD')}</div></div>
+          <div class="monto-chip"><div class="ml">Saldo Pendiente USD</div><div class="mv" style="color:${saldoUsd>1?'var(--yellow)':'var(--green)'};font-size:16px">${fmt(Math.max(saldoUsd,0),'USD')}</div></div>
+          ${state.tcBna ? `<div class="monto-chip"><div class="ml">Saldo equiv. en $ARS (TC día)</div><div class="mv" style="color:${saldoUsd>1?'var(--yellow)':'var(--green)'};font-size:15px">${fmt(Math.max(saldoUsdEnArs,0),'ARS')}</div></div>` : ''}
+        </div>
+      </div>` : ''}
+
       <div class="montos" style="gap:24px">
-        <div class="monto-chip">
-          <div class="ml">Total Presupuestado</div>
-          <div class="mv" style="color:var(--accent);font-size:18px">$ ${new Intl.NumberFormat('es-AR',{minimumFractionDigits:2}).format(totalGenPpto)}</div>
-        </div>
-        <div class="monto-chip">
-          <div class="ml">Total Abonado</div>
-          <div class="mv" style="color:var(--green);font-size:18px">$ ${new Intl.NumberFormat('es-AR',{minimumFractionDigits:2}).format(totalGenAb)}</div>
-        </div>
-        <div class="monto-chip">
-          <div class="ml">Saldo Total Pendiente</div>
-          <div class="mv" style="color:${totalGenSaldo>1?'var(--yellow)':'var(--green)'};font-size:18px">$ ${new Intl.NumberFormat('es-AR',{minimumFractionDigits:2}).format(Math.max(totalGenSaldo,0))}</div>
-        </div>
-        <div class="monto-chip">
-          <div class="ml">Proveedores</div>
-          <div class="mv" style="color:var(--purple);font-size:18px">${proveedores.length}</div>
-        </div>
+        <div class="monto-chip"><div class="ml">Proveedores</div><div class="mv" style="color:var(--purple);font-size:18px">${proveedores.length}</div></div>
       </div>
-      <div class="progress-wrap" style="margin-top:16px"><div class="progress-bar" style="width:${pctGen}%;background:${totalGenSaldo<=1?'var(--green)':'linear-gradient(90deg,var(--accent),var(--green))'}"></div></div>
-      <div class="progress-pct">${pctGen}% abonado del total</div>
+      <div class="progress-wrap" style="margin-top:16px"><div class="progress-bar" style="width:${pctGen}%;background:${pctGen>=100?'var(--green)':'linear-gradient(90deg,var(--accent),var(--green))'}"></div></div>
+      <div class="progress-pct">${pctGen}% abonado del total (equivalente en pesos)</div>
     </div>`;
   })()}
 
@@ -694,11 +716,13 @@ function buildTabCta(proveedores) {
         ${badge(ep)}
       </div>
       <div class="montos">
-        <div class="monto-chip"><div class="ml">Total Presupuestado</div><div class="mv" style="color:var(--accent)">${fmt(totalPpto,moneda)}</div></div>
+        <div class="monto-chip"><div class="ml">Total Presupuestado (${moneda})</div><div class="mv" style="color:var(--accent)">${fmt(totalPpto,moneda)}</div></div>
+        ${moneda==='USD' && state.tcBna ? `<div class="monto-chip"><div class="ml">Equivalente en $ARS (TC día)</div><div class="mv" style="color:var(--accent);font-size:12px">${fmt(totalPpto*state.tcBna,'ARS')}</div></div>` : ''}
         <div class="monto-chip"><div class="ml">Total Abonado (${moneda})</div><div class="mv" style="color:var(--green)">${fmt(totalAb,moneda)}</div></div>
-        ${moneda==='USD' ? `<div class="monto-chip"><div class="ml">Abonado en $ARS</div><div class="mv" style="color:var(--green);font-size:12px">${fmt(pagosProv.reduce((s,pg)=>s+(pg.montoPesos||0),0),'ARS')}</div></div>` : ''}
+        ${moneda==='USD' ? `<div class="monto-chip"><div class="ml">Abonado en $ARS (real)</div><div class="mv" style="color:var(--green);font-size:12px">${fmt(pagosProv.reduce((s,pg)=>s+(pg.montoPesos||0),0),'ARS')}</div></div>` : ''}
         <div class="monto-chip"><div class="ml">Saldo Pendiente (${moneda})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(Math.max(saldo,0),moneda)}</div></div>
-        ${moneda==='USD' && saldoEnPesosProv!==null ? `<div class="monto-chip"><div class="ml">NC en $ARS</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'};font-size:12px">${fmt(saldoEnPesosProv,'ARS')}</div></div>` : ''}
+        ${moneda==='USD' && state.tcBna && saldo>1 ? `<div class="monto-chip"><div class="ml">Saldo en $ARS (TC día)</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'};font-size:12px">${fmt(saldo*state.tcBna,'ARS')}</div></div>` : ''}
+        ${moneda==='USD' && saldoEnPesosProv!==null && saldoEnPesosProv>0 ? `<div class="monto-chip"><div class="ml">NC en $ARS (cerrados)</div><div class="mv" style="color:var(--purple);font-size:12px">${fmt(saldoEnPesosProv,'ARS')}</div></div>` : ''}
       </div>
       <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%;background:${saldo<=1?'var(--green)':'linear-gradient(90deg,var(--accent),var(--green))'}"></div></div>
       <div class="progress-pct">${pct}% abonado</div>
