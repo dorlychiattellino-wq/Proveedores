@@ -469,7 +469,13 @@ function buildTabPresupuestos(pptos) {
   return `
   <div class="section-header">
     <div class="section-title">Presupuestos de Proveedores</div>
-    <button class="btn btn-accent" id="btnNuevoPpto">＋ Nuevo Presupuesto</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <label class="btn btn-dark" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin:0">
+        📥 Importar CSV
+        <input type="file" accept=".csv" style="display:none" onchange="if(this.files[0]) window.importarCsvRepuestos(this.files[0])"/>
+      </label>
+      <button class="btn btn-accent" id="btnNuevoPpto">＋ Nuevo Presupuesto</button>
+    </div>
   </div>
   <div class="filters">
     <input style="max-width:220px" placeholder="🔍 Buscar proveedor…" id="filtProv" value="${state.filtroProveedor}"/>
@@ -1374,6 +1380,98 @@ function checkDiff() {
   } else {
     el.innerHTML = '';
   }
+}
+
+// ─── IMPORTAR CSV DESDE APP DE REPUESTOS ──────────────────────────────────
+window.importarCsvRepuestos = function(file){
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const texto = e.target.result.replace(/^\uFEFF/, ''); // saca BOM
+      const lineas = texto.split(/\r?\n/).filter(l => l.trim());
+      if(lineas.length < 2) { toast('❌ El CSV está vacío'); return; }
+      const headers = parseCsvLine(lineas[0]).map(h => h.trim());
+      const idx = name => headers.indexOf(name);
+
+      // Validar columnas obligatorias
+      const requeridas = ['proveedor','fecha','descripcion','moneda','tipoIva','item_desc','cantidad','precio_unit'];
+      const faltantes = requeridas.filter(c => idx(c) === -1);
+      if(faltantes.length > 0) { toast('❌ Faltan columnas: ' + faltantes.join(', ')); return; }
+
+      const filas = lineas.slice(1).map(l => parseCsvLine(l));
+
+      // Agrupar por proveedor
+      const grupos = {};
+      for (const f of filas) {
+        const prov = (f[idx('proveedor')] || '').trim();
+        if (!prov) continue;
+        if (!grupos[prov]) grupos[prov] = {
+          proveedor: prov,
+          fecha: f[idx('fecha')] || hoy(),
+          descripcion: f[idx('descripcion')] || 'Importado de Repuestos',
+          moneda: (f[idx('moneda')] || 'ARS').trim(),
+          tipoIva: (f[idx('tipoIva')] || '21').trim(),
+          items: []
+        };
+        grupos[prov].items.push({
+          desc: f[idx('item_desc')] || '',
+          cantidad: parseFloat(f[idx('cantidad')]) || 1,
+          precioUnit: parseFloat(f[idx('precio_unit')]) || 0
+        });
+      }
+
+      const cantProveedores = Object.keys(grupos).length;
+      if(cantProveedores === 0) { toast('❌ No se encontraron proveedores en el CSV'); return; }
+
+      if(!confirm('¿Importar ' + cantProveedores + ' presupuesto(s) desde el CSV?')) return;
+
+      let creados = 0;
+      for (const prov in grupos) {
+        const g = grupos[prov];
+        const ivaIncluido = g.tipoIva === 'incluido';
+        const { neto, conIva } = calcTotales(g.items, ivaIncluido, g.tipoIva);
+        await savePresupuesto({
+          proveedor: g.proveedor,
+          fecha: g.fecha,
+          descripcion: g.descripcion,
+          moneda: g.moneda,
+          tipoIva: g.tipoIva,
+          ivaIncluido,
+          validezDias: 30,
+          items: g.items,
+          totalNeto: neto,
+          totalConIva: conIva,
+          estado: 'vigente',
+          notas: 'Importado automáticamente desde la app de Repuestos'
+        });
+        creados++;
+      }
+      toast('✅ Importados ' + creados + ' presupuesto(s) desde Repuestos');
+    } catch (err) {
+      toast('❌ Error al leer el CSV');
+      console.error(err);
+    }
+  };
+  reader.readAsText(file);
+};
+
+// parser simple de una línea CSV que respeta comillas
+function parseCsvLine(line){
+  const out = []; let cur = ''; let q = false;
+  for (let i = 0; i < line.length; i++){
+    const ch = line[i];
+    if (q){
+      if (ch === '"' && line[i+1] === '"'){ cur += '"'; i++; }
+      else if (ch === '"'){ q = false; }
+      else cur += ch;
+    } else {
+      if (ch === '"') q = true;
+      else if (ch === ',') { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
 }
 
 </script>
