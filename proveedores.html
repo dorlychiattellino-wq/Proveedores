@@ -10,6 +10,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Proveedores">
 <meta name="theme-color" content="#0a0d1a">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Mono:wght@400;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet"/>
 <style>
   :root {
@@ -678,12 +681,12 @@ function buildTabCta(proveedores) {
 
       ${totalUsd > 0 ? `
       <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
-        <div style="color:var(--muted);font-size:11px;font-family:monospace;letter-spacing:1px;margin-bottom:8px">💵 PRESUPUESTOS EN DÓLARES (USD)${state.tcBna ? ' · TC día $'+state.tcBna : ''}</div>
+        <div style="color:var(--muted);font-size:11px;font-family:monospace;letter-spacing:1px;margin-bottom:8px">💵 PRESUPUESTOS EN DÓLARES (USD)${state.tcBna ? ' · TC $'+state.tcBna : ''}</div>
         <div class="montos" style="gap:24px">
           <div class="monto-chip"><div class="ml">Presupuestado USD</div><div class="mv" style="color:var(--accent);font-size:16px">${fmt(totalUsd,'USD')}</div></div>
           <div class="monto-chip"><div class="ml">Abonado USD</div><div class="mv" style="color:var(--green);font-size:16px">${fmt(abUsd,'USD')}</div></div>
           <div class="monto-chip"><div class="ml">Saldo Pendiente USD</div><div class="mv" style="color:${saldoUsd>1?'var(--yellow)':'var(--green)'};font-size:16px">${fmt(Math.max(saldoUsd,0),'USD')}</div></div>
-          ${state.tcBna ? `<div class="monto-chip"><div class="ml">Saldo equiv. en $ARS (TC día)</div><div class="mv" style="color:${saldoUsd>1?'var(--yellow)':'var(--green)'};font-size:15px">${fmt(Math.max(saldoUsdEnArs,0),'ARS')}</div></div>` : ''}
+          ${state.tcBna ? `<div class="monto-chip"><div class="ml">Saldo equiv. en $ARS (TC $${state.tcBna})</div><div class="mv" style="color:${saldoUsd>1?'var(--yellow)':'var(--green)'};font-size:15px">${fmt(Math.max(saldoUsdEnArs,0),'ARS')}</div></div>` : ''}
         </div>
       </div>` : ''}
 
@@ -717,11 +720,11 @@ function buildTabCta(proveedores) {
       </div>
       <div class="montos">
         <div class="monto-chip"><div class="ml">Total Presupuestado (${moneda})</div><div class="mv" style="color:var(--accent)">${fmt(totalPpto,moneda)}</div></div>
-        ${moneda==='USD' && state.tcBna ? `<div class="monto-chip"><div class="ml">Equivalente en $ARS (TC día)</div><div class="mv" style="color:var(--accent);font-size:12px">${fmt(totalPpto*state.tcBna,'ARS')}</div></div>` : ''}
+        ${moneda==='USD' && state.tcBna ? `<div class="monto-chip"><div class="ml">Equivalente en $ARS (TC $${state.tcBna})</div><div class="mv" style="color:var(--accent);font-size:12px">${fmt(totalPpto*state.tcBna,'ARS')}</div></div>` : ''}
         <div class="monto-chip"><div class="ml">Total Abonado (${moneda})</div><div class="mv" style="color:var(--green)">${fmt(totalAb,moneda)}</div></div>
         ${moneda==='USD' ? `<div class="monto-chip"><div class="ml">Abonado en $ARS (real)</div><div class="mv" style="color:var(--green);font-size:12px">${fmt(pagosProv.reduce((s,pg)=>s+(pg.montoPesos||0),0),'ARS')}</div></div>` : ''}
         <div class="monto-chip"><div class="ml">Saldo Pendiente (${moneda})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(Math.max(saldo,0),moneda)}</div></div>
-        ${moneda==='USD' && state.tcBna && saldo>1 ? `<div class="monto-chip"><div class="ml">Saldo en $ARS (TC día)</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'};font-size:12px">${fmt(saldo*state.tcBna,'ARS')}</div></div>` : ''}
+        ${moneda==='USD' && state.tcBna && saldo>1 ? `<div class="monto-chip"><div class="ml">Saldo en $ARS (TC $${state.tcBna})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'};font-size:12px">${fmt(saldo*state.tcBna,'ARS')}</div></div>` : ''}
         ${moneda==='USD' && saldoEnPesosProv!==null && saldoEnPesosProv>0 ? `<div class="monto-chip"><div class="ml">NC en $ARS (cerrados)</div><div class="mv" style="color:var(--purple);font-size:12px">${fmt(saldoEnPesosProv,'ARS')}</div></div>` : ''}
       </div>
       <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%;background:${saldo<=1?'var(--green)':'linear-gradient(90deg,var(--accent),var(--green))'}"></div></div>
@@ -739,7 +742,7 @@ function buildTabCta(proveedores) {
             </div>
             <div style="text-align:right">
               <div style="color:${sl<=1?'var(--green)':'var(--yellow)'};font-weight:700;font-size:13px;font-family:monospace">${sl<=1?(p.cerrado?'✅ Abonado':'✅ Pagado'):'Saldo: '+fmt(sl,p.moneda)}</div>
-              ${p.moneda==='USD'&&sl>1 ? `<div style="color:var(--dim);font-size:11px;font-family:monospace">${(()=>{ const sp=saldoEnPesos(p); if(sp===null) return ''; return (p.cerrado?'NC: ':'≈ ')+fmt(sp,'ARS')+(p.cerrado?' (dif. cambiaria)':' (TC día)'); })()}</div>` : ''}
+              ${p.moneda==='USD'&&sl>1 ? `<div style="color:var(--dim);font-size:11px;font-family:monospace">${(()=>{ const sp=saldoEnPesos(p); if(sp===null) return ''; return (p.cerrado?'NC: ':'≈ ')+fmt(sp,'ARS')+(p.cerrado?' (dif. cambiaria)':' (TC $'+state.tcBna+')'); })()}</div>` : ''}
               <div style="color:var(--dim);font-size:11px">Ppto: ${fmt(p.totalConIva,p.moneda)}</div>
             </div>
           </div>`;
@@ -1424,11 +1427,12 @@ window.importarCsvRepuestos = function(file){
 
       const filas = lineas.slice(1).map(l => parseCsvLine(l));
 
-      // Agrupar por proveedor
+      // Agrupar por proveedor (normalizamos a MAYÚSCULAS para unificar)
       const grupos = {};
       for (const f of filas) {
-        const prov = (f[idx('proveedor')] || '').trim();
-        if (!prov) continue;
+        const provRaw = (f[idx('proveedor')] || '').trim();
+        if (!provRaw) continue;
+        const prov = provRaw.toUpperCase();
         if (!grupos[prov]) grupos[prov] = {
           proveedor: prov,
           fecha: f[idx('fecha')] || hoy(),
