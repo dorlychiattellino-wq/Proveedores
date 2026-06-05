@@ -196,6 +196,7 @@ let state = {
   editData: null,
   filtroProveedor: '',
   filtroEstado: 'todos',
+  filtroCtaProveedor: '',
   tcBna: null,
 };
 
@@ -368,6 +369,19 @@ async function savePago(data) {
 async function toggleCerrarPpto(id) {
   const p = state.presupuestos[id];
   if(!p) return;
+  // Si el ppto aparece en "cancelados" pero no tiene flag cerrado (fue pagado automáticamente),
+  // al apretar 🔓 debe permitir "reabrir" creando un estado opuesto
+  if(!p.cerrado) {
+    // Si llegó acá significa que el usuario quiere "desmarcarlo como pagado",
+    // pero como está pagado por los pagos no podemos simplemente cambiar el flag.
+    // Le avisamos al usuario.
+    const abonado = getPagosDePresupuesto(id);
+    const total = parseFloat(p.totalConIva)||0;
+    if(abonado >= total - 1) {
+      alert('Este presupuesto está pagado porque los pagos cubren el total ($' + fmt(abonado, p.moneda) + ').\nPara reabrirlo, eliminá o reducí algún pago en la pestaña Pagos.');
+      return;
+    }
+  }
   if(!p.cerrado) {
     // Cerrar: guardar el TC del último pago para que quede fijo
     const tcUltimo = getTcUltimoPago(id) || state.tcBna;
@@ -509,7 +523,7 @@ function buildTabPresupuestos(pptos) {
                 </div>
                 <div style="color:var(--green);font-weight:700;font-size:13px;font-family:monospace">${p.cerrado?'✅ Abonado':'✅'} ${fmt(p.totalConIva, p.moneda)}</div>
                 <div style="display:flex;gap:4px">
-                  ${p.cerrado ? `<button class="btn-sm" data-action="toggle_cerrar" data-id="${p.id}" style="font-size:11px;padding:4px 8px;background:#7c2d12;color:#fff">🔓</button>` : ''}
+                  <button class="btn-sm" data-action="toggle_cerrar" data-id="${p.id}" style="font-size:11px;padding:4px 8px;background:#7c2d12;color:#fff" title="Reabrir presupuesto">🔓</button>
                   <button class="btn-sm btn-edit" data-action="edit" data-id="${p.id}" style="font-size:11px;padding:4px 8px">✏</button>
                   <button class="btn-sm btn-delete" data-action="delete" data-id="${p.id}" style="font-size:11px;padding:4px 8px">🗑</button>
                 </div>
@@ -533,8 +547,20 @@ function buildCardPpto(p) {
   const ep = estadoPago(p.id);
   const saldo = (parseFloat(p.totalConIva)||0) - abonado;
   const items = p.items || [];
+  // Calcular falta de factura
+  const totalFacturado = facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0);
+  const faltaFacturar = (parseFloat(p.totalConIva)||0) - totalFacturado;
+  const tieneFaltaFactura = abonado > 0 && faltaFacturar > 1 && !p.notaFacturaCerrada;
   return `
   <div class="card">
+    ${tieneFaltaFactura ? `
+    <div style="background:linear-gradient(90deg,#3f1f10,#4a2818);border:1px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="color:#fbbf24;font-size:13px;font-weight:600">
+        ⚠️ Falta factura por ${fmt(faltaFacturar, p.moneda)}
+        <div style="color:#fcd34d;font-size:11px;font-weight:400;margin-top:2px">Ya abonaste pero todavía no recibiste toda la facturación</div>
+      </div>
+      <button class="btn-sm" data-action="cerrar_nota_factura" data-id="${p.id}" style="background:#7c2d12;color:#fff;font-size:11px">✓ Factura recibida</button>
+    </div>` : ''}
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
       <div>
         <div class="card-title">${p.proveedor}</div>
@@ -641,8 +667,15 @@ function buildTabPagos(pgs) {
 // ── CTA ───────────────────────────────────────────────────────────────────
 function buildTabCta(proveedores) {
   if(proveedores.length === 0) return '<div class="empty"><div class="empty-icon">📊</div><div class="empty-text">No hay proveedores cargados aún.</div></div>';
+  // Aplicar filtro de búsqueda
+  const proveedoresFiltrados = state.filtroCtaProveedor
+    ? proveedores.filter(p => p.toLowerCase().includes(state.filtroCtaProveedor.toLowerCase()))
+    : proveedores;
   return `
   <div class="section-header"><div class="section-title">Cuenta Corriente por Proveedor</div></div>
+  <div class="filters" style="margin-bottom:16px">
+    <input style="max-width:280px" placeholder="🔍 Buscar proveedor…" id="filtCtaProv" value="${state.filtroCtaProveedor||''}"/>
+  </div>
 
   ${(()=>{
     const todosLosPptos = Object.values(state.presupuestos);
@@ -698,7 +731,7 @@ function buildTabCta(proveedores) {
     </div>`;
   })()}
 
-  ${proveedores.map(prov => {
+  ${proveedoresFiltrados.map(prov => {
     const pptos = Object.values(state.presupuestos).filter(p=>p.proveedor===prov);
     const moneda = pptos[0]?.moneda||'ARS';
     const totalPpto = pptos.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
@@ -1079,6 +1112,13 @@ function handleClick(e) {
     if(action==='delete') { deletePpto(id); return; }
     if(action==='toggle_cerrar') { toggleCerrarPpto(id); return; }
     if(action==='toggle_archivados') { state.archivadosAbiertos = !state.archivadosAbiertos; render(); return; }
+    if(action==='cerrar_nota_factura') {
+      const p = state.presupuestos[id];
+      if(p && confirm('¿Confirmás que ya recibiste toda la facturación de este presupuesto?')) {
+        set(ref(db, 'presupuestos/'+id), { ...p, notaFacturaCerrada: true }).then(() => toast('✅ Alerta cerrada'));
+      }
+      return;
+    }
     if(action==='edit_factura') { state.modal='editar_factura'; state.editData=JSON.parse(JSON.stringify(state.facturas[id])); render(); return; }
     if(action==='edit_pago') { state.modal='editar_pago'; state.editData=JSON.parse(JSON.stringify(state.pagos[id])); render(); return; }
     if(action==='delete_factura') { deleteFactura(id); return; }
@@ -1276,6 +1316,7 @@ function handleInput(e) {
   const t = e.target;
   // Filtro proveedor
   if(t.id === 'filtProv') { state.filtroProveedor = t.value; render(); return; }
+  if(t.id === 'filtCtaProv') { state.filtroCtaProveedor = t.value; render(); return; }
   // Items del presupuesto
   if(t.dataset.item !== undefined && t.dataset.field) {
     const i = parseInt(t.dataset.item);
