@@ -197,6 +197,7 @@ let state = {
   filtroProveedor: '',
   filtroEstado: 'todos',
   filtroCtaProveedor: '',
+  alertasAbiertas: false,
   tcBna: null,
 };
 
@@ -444,6 +445,17 @@ function buildApp() {
 }
 
 function buildHeader(np, nf, npg) {
+  // Calcular presupuestos con falta de facturación (de TODOS, incluso cancelados)
+  const alertasFactura = Object.values(state.presupuestos).filter(p => {
+    if(p.notaFacturaCerrada) return false;
+    const abonado = getPagosDePresupuesto(p.id);
+    if(abonado <= 0) return false;
+    const facts = Object.values(state.facturas).filter(f => f.presupuestoId === p.id);
+    const totalFacturado = facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0);
+    const faltaFacturar = (parseFloat(p.totalConIva)||0) - totalFacturado;
+    return faltaFacturar > 1;
+  });
+  const cantAlertas = alertasFactura.length;
   return `
   <div class="header">
     <div>
@@ -454,11 +466,43 @@ function buildHeader(np, nf, npg) {
       <div class="header-title">💼 Proveedores & Pagos</div>
     </div>
     <div class="stats">
+      ${cantAlertas > 0 ? `
+      <div class="stat-chip" data-action="toggle_alertas" style="background:linear-gradient(135deg,#3f1f10,#4a2818);border-color:#f59e0b;cursor:pointer;position:relative">
+        <div class="num" style="color:#fbbf24">⚠️ ${cantAlertas}</div>
+        <div class="lbl" style="color:#fcd34d">FALTA FACT.</div>
+      </div>` : ''}
       <div class="stat-chip"><div class="num" style="color:var(--accent)">${np}</div><div class="lbl">PRESUPUESTOS</div></div>
       <div class="stat-chip"><div class="num" style="color:var(--purple)">${nf}</div><div class="lbl">FACTURAS</div></div>
       <div class="stat-chip"><div class="num" style="color:var(--green)">${npg}</div><div class="lbl">PAGOS</div></div>
     </div>
-  </div>`;
+  </div>
+
+  ${state.alertasAbiertas && cantAlertas > 0 ? `
+  <div style="background:linear-gradient(180deg,#3f1f10,#1a1d35);border-bottom:1px solid #f59e0b;padding:14px 24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="color:#fbbf24;font-weight:700;font-size:14px;font-family:'Syne',sans-serif">⚠️ Presupuestos abonados sin facturar (${cantAlertas})</div>
+      <button class="btn-sm" data-action="toggle_alertas" style="background:#1e2235;color:var(--muted);font-size:11px">✕ Cerrar</button>
+    </div>
+    <div style="max-height:280px;overflow-y:auto">
+      ${alertasFactura.map(p => {
+        const facts = Object.values(state.facturas).filter(f => f.presupuestoId === p.id);
+        const totalFacturado = facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0);
+        const faltaFacturar = (parseFloat(p.totalConIva)||0) - totalFacturado;
+        return `
+        <div style="background:#12162a;border:1px solid #2d3154;border-radius:10px;padding:10px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="flex:1;min-width:200px">
+            <div style="color:var(--text);font-weight:600;font-size:13px">${p.proveedor} — ${p.descripcion}</div>
+            <div style="color:var(--dim);font-size:11px;font-family:monospace;margin-top:2px">📅 ${p.fecha} · ${facts.length>0?'Fact: '+facts.map(f=>f.nroFactura).join(', '):'Sin factura cargada'}</div>
+            <div style="color:#fbbf24;font-size:12px;margin-top:4px;font-weight:600">Falta facturar: ${fmt(faltaFacturar, p.moneda)}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn-sm btn-factura" data-action="factura" data-id="${p.id}" style="font-size:11px">🧾 Cargar Factura</button>
+            <button class="btn-sm" data-action="cerrar_nota_factura" data-id="${p.id}" style="background:#7c2d12;color:#fff;font-size:11px">✓ Recibida</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>` : ''}`;
 }
 
 function buildTabs() {
@@ -553,14 +597,6 @@ function buildCardPpto(p) {
   const tieneFaltaFactura = abonado > 0 && faltaFacturar > 1 && !p.notaFacturaCerrada;
   return `
   <div class="card">
-    ${tieneFaltaFactura ? `
-    <div style="background:linear-gradient(90deg,#3f1f10,#4a2818);border:1px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <div style="color:#fbbf24;font-size:13px;font-weight:600">
-        ⚠️ Falta factura por ${fmt(faltaFacturar, p.moneda)}
-        <div style="color:#fcd34d;font-size:11px;font-weight:400;margin-top:2px">Ya abonaste pero todavía no recibiste toda la facturación</div>
-      </div>
-      <button class="btn-sm" data-action="cerrar_nota_factura" data-id="${p.id}" style="background:#7c2d12;color:#fff;font-size:11px">✓ Factura recibida</button>
-    </div>` : ''}
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
       <div>
         <div class="card-title">${p.proveedor}</div>
@@ -1112,6 +1148,7 @@ function handleClick(e) {
     if(action==='delete') { deletePpto(id); return; }
     if(action==='toggle_cerrar') { toggleCerrarPpto(id); return; }
     if(action==='toggle_archivados') { state.archivadosAbiertos = !state.archivadosAbiertos; render(); return; }
+    if(action==='toggle_alertas') { state.alertasAbiertas = !state.alertasAbiertas; render(); return; }
     if(action==='cerrar_nota_factura') {
       const p = state.presupuestos[id];
       if(p && confirm('¿Confirmás que ya recibiste toda la facturación de este presupuesto?')) {
@@ -1314,9 +1351,23 @@ function handleClick(e) {
 
 function handleInput(e) {
   const t = e.target;
-  // Filtro proveedor
-  if(t.id === 'filtProv') { state.filtroProveedor = t.value; render(); return; }
-  if(t.id === 'filtCtaProv') { state.filtroCtaProveedor = t.value; render(); return; }
+  // Filtros: preservar foco y posición del cursor
+  if(t.id === 'filtProv') {
+    state.filtroProveedor = t.value;
+    const pos = t.selectionStart;
+    render();
+    const el = document.getElementById('filtProv');
+    if(el) { el.focus(); el.setSelectionRange(pos, pos); }
+    return;
+  }
+  if(t.id === 'filtCtaProv') {
+    state.filtroCtaProveedor = t.value;
+    const pos = t.selectionStart;
+    render();
+    const el = document.getElementById('filtCtaProv');
+    if(el) { el.focus(); el.setSelectionRange(pos, pos); }
+    return;
+  }
   // Items del presupuesto
   if(t.dataset.item !== undefined && t.dataset.field) {
     const i = parseInt(t.dataset.item);
