@@ -1519,9 +1519,13 @@ window.importarCsvRepuestos = function(file){
       const faltantes = requeridas.filter(c => idx(c) === -1);
       if(faltantes.length > 0) { toast('❌ Faltan columnas: ' + faltantes.join(', ')); return; }
 
+      const tieneColDescuento = idx('descuento') !== -1;
       const filas = lineas.slice(1).map(l => parseCsvLine(l));
 
       // Agrupar por proveedor (normalizamos a MAYÚSCULAS para unificar)
+      // precio_unit = precio de LISTA (sin descuento). El descuento viene en la
+      // columna `descuento` (%) y se aplica UNA sola vez, por ítem:
+      //   precioFinal = lista × (1 − descuento/100)
       const grupos = {};
       for (const f of filas) {
         const provRaw = (f[idx('proveedor')] || '').trim();
@@ -1535,13 +1539,18 @@ window.importarCsvRepuestos = function(file){
           tipoIva: (f[idx('tipoIva')] || '21').trim(),
           validezDias: parseInt(idx('validez') !== -1 ? f[idx('validez')] : '') || 30,
           observaciones: (idx('observaciones') !== -1 ? f[idx('observaciones')] : '') || '',
-          items: []
+          itemsLista: [],   // ítems con precio de LISTA (para referencia/desglose)
+          items: [],        // ítems con precio FINAL (descuento ya aplicado)
+          dtos: []          // % de descuento de cada ítem (para detectar el del ppto)
         };
-        grupos[prov].items.push({
-          desc: f[idx('item_desc')] || '',
-          cantidad: parseFloat(f[idx('cantidad')]) || 1,
-          precioUnit: parseFloat(f[idx('precio_unit')]) || 0
-        });
+        const lista = parseFloat(f[idx('precio_unit')]) || 0;
+        const dto = tieneColDescuento ? (parseFloat(f[idx('descuento')]) || 0) : 0;
+        const precioFinal = (dto > 0 && dto < 100) ? lista * (1 - dto/100) : lista;
+        const cant = parseFloat(f[idx('cantidad')]) || 1;
+        const desc = f[idx('item_desc')] || '';
+        grupos[prov].itemsLista.push({ desc, cantidad: cant, precioUnit: lista });
+        grupos[prov].items.push({ desc, cantidad: cant, precioUnit: precioFinal });
+        grupos[prov].dtos.push(dto);
       }
 
       const cantProveedores = Object.keys(grupos).length;
@@ -1552,16 +1561,19 @@ window.importarCsvRepuestos = function(file){
       let creados = 0;
       for (const prov in grupos) {
         const g = grupos[prov];
-
-        // Detectar descuento en observaciones (ej: "Dto 15%", "Descuento 10%", "15% dto")
-        const matchDto = g.observaciones.match(/(\d+(?:[\.,]\d+)?)\s*%/);
-        const dtoPct = matchDto ? parseFloat(matchDto[1].replace(',','.')) : 0;
-
         const ivaIncluido = g.tipoIva === 'incluido';
-        // Total bruto (sin descuento) con los precios originales
+
+        // Total FINAL (con descuento ya aplicado por ítem, una sola vez)
         const { neto, conIva } = calcTotales(g.items, ivaIncluido, g.tipoIva);
-        // Aplicar descuento sobre el total
-        const totalConDto = (dtoPct > 0 && dtoPct < 100) ? conIva * (1 - dtoPct/100) : conIva;
+        // Total de LISTA (sin descuento), solo para mostrar el desglose tachado
+        const totalLista = calcTotales(g.itemsLista, ivaIncluido, g.tipoIva).conIva;
+
+        // % de descuento para mostrar en la tarjeta: si todos los ítems comparten
+        // el mismo %, usamos ese; si no, lo dejamos en 0 (los precios ya son finales).
+        const dtosNoCero = g.dtos.filter(d => d > 0);
+        const dtoUniforme = dtosNoCero.length > 0 && dtosNoCero.every(d => d === dtosNoCero[0]);
+        const dtoPpto = dtoUniforme ? dtosNoCero[0] : 0;
+        const huboDescuento = totalLista - conIva > 0.01;
 
         await savePresupuesto({
           proveedor: g.proveedor,
@@ -1571,11 +1583,12 @@ window.importarCsvRepuestos = function(file){
           tipoIva: g.tipoIva,
           ivaIncluido,
           validezDias: g.validezDias,
-          items: g.items,
+          items: g.items,            // precios FINALES (descuento aplicado UNA vez)
           totalNeto: neto,
-          totalConIvaBruto: conIva,    // total sin descuento (referencia)
-          descuentoPpto: dtoPct,        // % de descuento del presupuesto
-          totalConIva: totalConDto,     // total final ya con descuento aplicado
+          // Solo guardamos el bruto si efectivamente hubo descuento, para el desglose tachado
+          ...(huboDescuento ? { totalConIvaBruto: totalLista } : {}),
+          descuentoPpto: dtoPpto,    // % a mostrar en el badge (0 si es mixto)
+          totalConIva: conIva,       // total final
           estado: 'vigente',
           notas: g.observaciones ? ('Importado desde Repuestos · ' + g.observaciones) : 'Importado desde Repuestos'
         });
