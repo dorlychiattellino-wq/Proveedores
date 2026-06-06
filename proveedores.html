@@ -1577,7 +1577,7 @@ window.importarCsvRepuestos = function(file){
           descuentoPpto: dtoPct,        // % de descuento del presupuesto
           totalConIva: totalConDto,     // total final ya con descuento aplicado
           estado: 'vigente',
-          notas: g.observaciones || 'Importado desde la app de Repuestos'
+          notas: g.observaciones ? ('Importado desde Repuestos · ' + g.observaciones) : 'Importado desde Repuestos'
         });
         creados++;
       }
