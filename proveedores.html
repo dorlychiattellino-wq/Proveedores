@@ -606,10 +606,12 @@ function buildCardPpto(p) {
       <div style="text-align:right">
         ${badge(ep)}
         ${facts.length===0 ? badge('sin_factura') : badge('facturado')}
+        ${p.descuentoPpto > 0 ? `<span class="badge" style="background:#ede9fe;color:#5b21b6">🏷️ ${p.descuentoPpto}% DTO</span>` : ''}
       </div>
     </div>
     <div class="montos">
-      <div class="monto-chip"><div class="ml">Presupuesto</div><div class="mv" style="color:var(--accent)">${fmt(p.totalConIva, p.moneda)}</div></div>
+      ${p.descuentoPpto > 0 && p.totalConIvaBruto ? `<div class="monto-chip"><div class="ml">Sin Dto</div><div class="mv" style="color:var(--dim);text-decoration:line-through;font-size:13px">${fmt(p.totalConIvaBruto, p.moneda)}</div></div>` : ''}
+      <div class="monto-chip"><div class="ml">${p.descuentoPpto > 0 ? 'Con '+p.descuentoPpto+'% Dto' : 'Presupuesto'}</div><div class="mv" style="color:var(--accent)">${fmt(p.totalConIva, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Abonado</div><div class="mv" style="color:var(--green)">${fmt(abonado, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Total Facturado</div><div class="mv" style="color:var(--purple)">${fmt(facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0), p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Saldo${p.moneda==='USD'&&p.cerrado?' / NC en $':''}</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${(()=>{ if(p.moneda!=='USD') return fmt(saldo,p.moneda); const sp = saldoEnPesos(p); if(sp===null) return fmt(saldo,'USD'); return fmt(saldo,'USD') + ' <span style="color:var(--dim);font-size:11px;font-family:monospace">(' + (p.cerrado?'NC: ':'') + fmt(sp,'ARS') + (p.cerrado?' dif. cambiaria':'') + ')</span>'; })()}</div></div>
@@ -1550,8 +1552,17 @@ window.importarCsvRepuestos = function(file){
       let creados = 0;
       for (const prov in grupos) {
         const g = grupos[prov];
+
+        // Detectar descuento en observaciones (ej: "Dto 15%", "Descuento 10%", "15% dto")
+        const matchDto = g.observaciones.match(/(\d+(?:[\.,]\d+)?)\s*%/);
+        const dtoPct = matchDto ? parseFloat(matchDto[1].replace(',','.')) : 0;
+
         const ivaIncluido = g.tipoIva === 'incluido';
+        // Total bruto (sin descuento) con los precios originales
         const { neto, conIva } = calcTotales(g.items, ivaIncluido, g.tipoIva);
+        // Aplicar descuento sobre el total
+        const totalConDto = (dtoPct > 0 && dtoPct < 100) ? conIva * (1 - dtoPct/100) : conIva;
+
         await savePresupuesto({
           proveedor: g.proveedor,
           fecha: g.fecha,
@@ -1562,7 +1573,9 @@ window.importarCsvRepuestos = function(file){
           validezDias: g.validezDias,
           items: g.items,
           totalNeto: neto,
-          totalConIva: conIva,
+          totalConIvaBruto: conIva,    // total sin descuento (referencia)
+          descuentoPpto: dtoPct,        // % de descuento del presupuesto
+          totalConIva: totalConDto,     // total final ya con descuento aplicado
           estado: 'vigente',
           notas: g.observaciones || 'Importado desde la app de Repuestos'
         });
