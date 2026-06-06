@@ -1531,6 +1531,8 @@ window.importarCsvRepuestos = function(file){
           descripcion: f[idx('descripcion')] || 'Importado de Repuestos',
           moneda: (f[idx('moneda')] || 'ARS').trim(),
           tipoIva: (f[idx('tipoIva')] || '21').trim(),
+          validezDias: parseInt(idx('validez') !== -1 ? f[idx('validez')] : '') || 30,
+          observaciones: (idx('observaciones') !== -1 ? f[idx('observaciones')] : '') || '',
           items: []
         };
         grupos[prov].items.push({
@@ -1557,12 +1559,12 @@ window.importarCsvRepuestos = function(file){
           moneda: g.moneda,
           tipoIva: g.tipoIva,
           ivaIncluido,
-          validezDias: 30,
+          validezDias: g.validezDias,
           items: g.items,
           totalNeto: neto,
           totalConIva: conIva,
           estado: 'vigente',
-          notas: 'Importado automáticamente desde la app de Repuestos'
+          notas: g.observaciones || 'Importado desde la app de Repuestos'
         });
         creados++;
       }
