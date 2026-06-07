@@ -236,6 +236,103 @@ async function fetchTcBna() {
 }
 fetchTcBna();
 
+// ─── EXPORTAR RESPALDO (copia de seguridad de todos los datos) ────────────
+window.exportarRespaldo = function() {
+  try {
+    const respaldo = {
+      _info: 'Respaldo de Gestión de Proveedores',
+      _fecha: new Date().toISOString(),
+      presupuestos: state.presupuestos || {},
+      facturas: state.facturas || {},
+      pagos: state.pagos || {}
+    };
+    const cant = Object.keys(respaldo.presupuestos).length;
+    if(cant === 0 && Object.keys(respaldo.facturas).length === 0 && Object.keys(respaldo.pagos).length === 0) {
+      toast('⚠️ No hay datos para respaldar todavía');
+      return;
+    }
+    const texto = JSON.stringify(respaldo, null, 2);
+    const blob = new Blob([texto], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const f = new Date().toISOString().slice(0,10); // AAAA-MM-DD
+    a.href = url;
+    a.download = 'respaldo-proveedores-' + f + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('💾 Respaldo descargado (' + f + ')');
+  } catch(err) {
+    toast('❌ Error al generar el respaldo');
+    console.error(err);
+  }
+};
+
+// ─── RESTAURAR RESPALDO (reemplaza TODOS los datos por los del archivo) ────
+window.restaurarRespaldo = function(file) {
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const datos = JSON.parse(e.target.result);
+
+      // Validar que el archivo tenga la estructura esperada
+      if(typeof datos !== 'object' || datos === null ||
+         (datos.presupuestos === undefined && datos.facturas === undefined && datos.pagos === undefined)) {
+        alert('❌ El archivo no parece un respaldo válido de esta app.\n\nDebe ser un archivo .json descargado con el botón "💾 Respaldo".');
+        return;
+      }
+
+      const nuevosPpto = datos.presupuestos || {};
+      const nuevasFact = datos.facturas || {};
+      const nuevosPagos = datos.pagos || {};
+      const cP = Object.keys(nuevosPpto).length;
+      const cF = Object.keys(nuevasFact).length;
+      const cG = Object.keys(nuevosPagos).length;
+
+      // Datos actuales (para avisar qué se va a perder)
+      const actP = Object.keys(state.presupuestos||{}).length;
+      const actF = Object.keys(state.facturas||{}).length;
+      const actG = Object.keys(state.pagos||{}).length;
+
+      // PRIMERA confirmación
+      const fechaResp = datos._fecha ? new Date(datos._fecha).toLocaleString('es-AR') : 'desconocida';
+      const aviso1 =
+        '⚠️ RESTAURAR REEMPLAZA TODOS LOS DATOS\n\n' +
+        'Respaldo a cargar (fecha: ' + fechaResp + '):\n' +
+        '  • ' + cP + ' presupuesto(s)\n  • ' + cF + ' factura(s)\n  • ' + cG + ' pago(s)\n\n' +
+        'Datos actuales que se BORRARÁN:\n' +
+        '  • ' + actP + ' presupuesto(s)\n  • ' + actF + ' factura(s)\n  • ' + actG + ' pago(s)\n\n' +
+        'Esto afecta a TODOS los que usan la app. ¿Continuar?';
+      if(!confirm(aviso1)) { toast('Restauración cancelada'); return; }
+
+      // SEGUNDA confirmación (escribir la palabra)
+      const palabra = prompt('Para confirmar que querés borrar los datos actuales y reemplazarlos por el respaldo, escribí:  RESTAURAR');
+      if(palabra === null) { toast('Restauración cancelada'); return; }
+      if(palabra.trim().toUpperCase() !== 'RESTAURAR') { alert('No se escribió RESTAURAR. No se hizo ningún cambio.'); return; }
+
+      // Sugerir guardar un respaldo del estado actual antes de pisar
+      if(actP + actF + actG > 0) {
+        if(confirm('💾 ¿Querés descargar primero un respaldo de los datos ACTUALES antes de reemplazarlos?\n\n(Recomendado, por si necesitás volver atrás)')) {
+          window.exportarRespaldo();
+        }
+      }
+
+      // Reemplazar cada rama completa
+      await set(ref(db, 'presupuestos'), nuevosPpto);
+      await set(ref(db, 'facturas'), nuevasFact);
+      await set(ref(db, 'pagos'), nuevosPagos);
+
+      toast('✅ Datos restaurados (' + cP + ' ppto, ' + cF + ' fact, ' + cG + ' pagos)');
+    } catch(err) {
+      alert('❌ Error al leer el archivo. ¿Es un .json de respaldo válido?');
+      console.error(err);
+    }
+  };
+  reader.readAsText(file);
+};
+
 // Permitir ingresar TC manualmente desde el header
 window.actualizarTc = function(val) {
   const tc = parseFloat(val);
@@ -466,6 +563,10 @@ function buildHeader(np, nf, npg) {
       <div class="header-title">💼 Proveedores & Pagos</div>
     </div>
     <div class="stats">
+      <button onclick="window.exportarRespaldo()" title="Descargar copia de seguridad de todos los datos" style="background:var(--bg3);color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:6px 14px;cursor:pointer;font-family:'Nunito',sans-serif;font-weight:600;font-size:12px;display:inline-flex;align-items:center;gap:6px">💾 Respaldo</button>
+      <label title="Restaurar datos desde un archivo de respaldo (.json)" style="background:var(--bg3);color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:6px 14px;cursor:pointer;font-family:'Nunito',sans-serif;font-weight:600;font-size:12px;display:inline-flex;align-items:center;gap:6px">📂 Restaurar
+        <input type="file" accept=".json,application/json" style="display:none" onchange="if(this.files[0]){ window.restaurarRespaldo(this.files[0]); this.value=''; }"/>
+      </label>
       ${cantAlertas > 0 ? `
       <div class="stat-chip" data-action="toggle_alertas" style="background:linear-gradient(135deg,#3f1f10,#4a2818);border-color:#f59e0b;cursor:pointer;position:relative">
         <div class="num" style="color:#fbbf24">⚠️ ${cantAlertas}</div>
