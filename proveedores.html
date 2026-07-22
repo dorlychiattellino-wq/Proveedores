@@ -516,6 +516,22 @@ async function deletePago(id) {
 }
 
 
+// ─── ORDENAMIENTO (más nuevos arriba) ────────────────────────────────────
+// El id se genera con Date.now().toString(36), así que sus primeros 8 caracteres
+// codifican el momento exacto de creación. Se usa como desempate cuando dos
+// registros tienen la misma fecha.
+function tsDeId(id) {
+  const n = parseInt(String(id || '').slice(0, 8), 36);
+  return isNaN(n) ? 0 : n;
+}
+function ordenarDesc(arr, campoFecha) {
+  return [...arr].sort((a, b) => {
+    const c = (b[campoFecha] || '').localeCompare(a[campoFecha] || '');
+    if (c !== 0) return c;
+    return tsDeId(b.id) - tsDeId(a.id);
+  });
+}
+
 // ─── RENDER ───────────────────────────────────────────────────────────────
 function render() {
   document.getElementById('app').innerHTML = buildApp();
@@ -523,9 +539,9 @@ function render() {
 }
 
 function buildApp() {
-  const pptos = Object.values(state.presupuestos);
-  const facts = Object.values(state.facturas);
-  const pgs = Object.values(state.pagos);
+  const pptos = ordenarDesc(Object.values(state.presupuestos), 'fecha');
+  const facts = ordenarDesc(Object.values(state.facturas), 'fechaFactura');
+  const pgs = ordenarDesc(Object.values(state.pagos), 'fechaPago');
   const proveedores = [...new Set(pptos.map(p=>p.proveedor))].sort();
 
   return `
@@ -553,6 +569,21 @@ function buildHeader(np, nf, npg) {
     return faltaFacturar > 1;
   });
   const cantAlertas = alertasFactura.length;
+
+  // ⚠️ FALTA NC: presupuestos pagados/cerrados donde lo FACTURADO supera lo ABONADO.
+  // Ej: presupuesto $100, factura $110, se pagó $100 y se cerró → el proveedor debe
+  // una Nota de Crédito por $10. Antes esto no disparaba ninguna alerta porque la
+  // alerta existente solo compara facturado vs presupuestado (falta facturar).
+  const alertasNC = Object.values(state.presupuestos).filter(p => {
+    if(p.ncCerrada) return false;
+    if(estadoPago(p.id) !== 'pagado') return false;
+    const factsP = Object.values(state.facturas).filter(f => f.presupuestoId === p.id);
+    if(factsP.length === 0) return false;
+    const totalFacturado = factsP.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0);
+    const abonado = getPagosDePresupuesto(p.id);
+    return (totalFacturado - abonado) > 1;
+  });
+  const cantNC = alertasNC.length;
   return `
   <div class="header">
     <div>
@@ -571,6 +602,11 @@ function buildHeader(np, nf, npg) {
       <div class="stat-chip" data-action="toggle_alertas" style="background:linear-gradient(135deg,#3f1f10,#4a2818);border-color:#f59e0b;cursor:pointer;position:relative">
         <div class="num" style="color:#fbbf24">⚠️ ${cantAlertas}</div>
         <div class="lbl" style="color:#fcd34d">FALTA FACT.</div>
+      </div>` : ''}
+      ${cantNC > 0 ? `
+      <div class="stat-chip" data-action="toggle_alertas_nc" style="background:linear-gradient(135deg,#2d1f6e,#3f1030);border-color:#a78bfa;cursor:pointer;position:relative">
+        <div class="num" style="color:#c4b5fd">📝 ${cantNC}</div>
+        <div class="lbl" style="color:#ddd6fe">FALTA NC</div>
       </div>` : ''}
       <div class="stat-chip"><div class="num" style="color:var(--accent)">${np}</div><div class="lbl">PRESUPUESTOS</div></div>
       <div class="stat-chip"><div class="num" style="color:var(--purple)">${nf}</div><div class="lbl">FACTURAS</div></div>
@@ -599,6 +635,33 @@ function buildHeader(np, nf, npg) {
           <div style="display:flex;gap:6px">
             <button class="btn-sm btn-factura" data-action="factura" data-id="${p.id}" style="font-size:11px">🧾 Cargar Factura</button>
             <button class="btn-sm" data-action="cerrar_nota_factura" data-id="${p.id}" style="background:#7c2d12;color:#fff;font-size:11px">✓ Recibida</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>` : ''}
+
+  ${state.alertasNcAbiertas && cantNC > 0 ? `
+  <div style="background:linear-gradient(180deg,#2d1f6e,#1a1d35);border-bottom:1px solid #a78bfa;padding:14px 24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="color:#c4b5fd;font-weight:700;font-size:14px;font-family:'Syne',sans-serif">📝 Presupuestos cerrados con Nota de Crédito pendiente (${cantNC})</div>
+      <button class="btn-sm" data-action="toggle_alertas_nc" style="background:#1e2235;color:var(--muted);font-size:11px">✕ Cerrar</button>
+    </div>
+    <div style="max-height:280px;overflow-y:auto">
+      ${alertasNC.map(p => {
+        const factsP = Object.values(state.facturas).filter(f => f.presupuestoId === p.id);
+        const totalFacturado = factsP.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0);
+        const abonado = getPagosDePresupuesto(p.id);
+        const ncPend = totalFacturado - abonado;
+        return `
+        <div style="background:#12162a;border:1px solid #2d3154;border-radius:10px;padding:10px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="flex:1;min-width:200px">
+            <div style="color:var(--text);font-weight:600;font-size:13px">${p.proveedor} — ${p.descripcion}</div>
+            <div style="color:var(--dim);font-size:11px;font-family:monospace;margin-top:2px">📅 ${p.fecha} · Fact: ${factsP.map(f=>f.nroFactura).join(', ')} · Facturado ${fmt(totalFacturado, p.moneda)} · Abonado ${fmt(abonado, p.moneda)}</div>
+            <div style="color:#c4b5fd;font-size:12px;margin-top:4px;font-weight:600">Solicitar NC al proveedor por: ${fmt(ncPend, p.moneda)}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn-sm" data-action="cerrar_nc" data-id="${p.id}" style="background:#4c1d95;color:#fff;font-size:11px">✓ NC Recibida</button>
           </div>
         </div>`;
       }).join('')}
@@ -660,11 +723,15 @@ function buildTabPresupuestos(pptos) {
           <div style="background:#0f1117;border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:8px">
             ${pagados.map(p => {
               const facts = getFacturasDePresupuesto(p.id);
+              const totFactP = facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0);
+              const abonP = getPagosDePresupuesto(p.id);
+              const ncPendP = (!p.ncCerrada && facts.length>0 && (totFactP - abonP) > 1) ? (totFactP - abonP) : 0;
               return `
               <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #1e2235;flex-wrap:wrap;gap:6px">
                 <div style="flex:1;min-width:200px">
                   <div style="color:var(--text);font-size:13px;font-weight:600">${p.proveedor} — ${p.descripcion}</div>
                   <div style="color:var(--dim);font-size:11px;font-family:monospace">📅 ${p.fecha} · ${facts.length>0?'Fact: '+facts.map(f=>f.nroFactura).join(', '):'Sin factura'}${p.cerrado&&p.tcCierre?' · TC cierre: $'+p.tcCierre:''}</div>
+                  ${ncPendP>0 ? `<div style="color:#c4b5fd;font-size:11px;font-family:monospace;margin-top:2px">📝 NC pendiente: ${fmt(ncPendP, p.moneda)} (facturado ${fmt(totFactP,p.moneda)} vs abonado ${fmt(abonP,p.moneda)})</div>` : ''}
                 </div>
                 <div style="color:var(--green);font-weight:700;font-size:13px;font-family:monospace">${p.cerrado?'✅ Abonado':'✅'} ${fmt(p.totalConIva, p.moneda)}</div>
                 <div style="display:flex;gap:4px">
@@ -871,7 +938,7 @@ function buildTabCta(proveedores) {
   })()}
 
   ${proveedoresFiltrados.map(prov => {
-    const pptos = Object.values(state.presupuestos).filter(p=>p.proveedor===prov);
+    const pptos = ordenarDesc(Object.values(state.presupuestos).filter(p=>p.proveedor===prov), 'fecha');
     const moneda = pptos[0]?.moneda||'ARS';
     const totalPpto = pptos.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
     const totalAb = pptos.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
@@ -880,7 +947,7 @@ function buildTabCta(proveedores) {
     const saldoEnPesosProv = moneda==='USD' ? pptos.reduce((s,p)=>{ const sp = saldoEnPesos(p); return s + (sp||0); }, 0) : null;
     const pct = totalPpto > 0 ? Math.min(Math.round((totalAb/totalPpto)*100),100) : 0;
     const ep = saldo<=1?'pagado':totalAb>0?'parcial':'pendiente';
-    const pagosProv = Object.values(state.pagos).filter(pg=>pptos.some(p=>p.id===pg.presupuestoId));
+    const pagosProv = ordenarDesc(Object.values(state.pagos).filter(pg=>pptos.some(p=>p.id===pg.presupuestoId)), 'fechaPago');
     return `
     <div class="card" style="margin-bottom:20px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
@@ -1252,6 +1319,14 @@ function handleClick(e) {
     if(action==='toggle_cerrar') { toggleCerrarPpto(id); return; }
     if(action==='toggle_archivados') { state.archivadosAbiertos = !state.archivadosAbiertos; render(); return; }
     if(action==='toggle_alertas') { state.alertasAbiertas = !state.alertasAbiertas; render(); return; }
+    if(action==='toggle_alertas_nc') { state.alertasNcAbiertas = !state.alertasNcAbiertas; render(); return; }
+    if(action==='cerrar_nc') {
+      const p = state.presupuestos[id];
+      if(p && confirm('¿Confirmás que ya recibiste la Nota de Crédito por la diferencia entre lo facturado y lo abonado?')) {
+        set(ref(db, 'presupuestos/'+id), { ...p, ncCerrada: true }).then(() => toast('✅ Alerta de NC cerrada'));
+      }
+      return;
+    }
     if(action==='cerrar_nota_factura') {
       const p = state.presupuestos[id];
       if(p && confirm('¿Confirmás que ya recibiste toda la facturación de este presupuesto?')) {
@@ -1298,6 +1373,10 @@ function handleClick(e) {
     const tipoIva = document.getElementById('m_iva')?.value || '21';
     const ivaIncluido = tipoIva === 'incluido';
     const { neto, conIva } = calcTotales(items, ivaIncluido, tipoIva);
+    // Si el presupuesto tiene un descuento propio (ej: importado con dto), re-aplicarlo
+    // para que editar no cambie silenciosamente el total final.
+    const dtoPpto = parseFloat(state.editData.descuentoPpto) || 0;
+    const totalFinal = (dtoPpto > 0 && dtoPpto < 100) ? conIva * (1 - dtoPpto/100) : conIva;
     const data = {
       id: state.editData.id || null,
       proveedor: prov,
@@ -1310,14 +1389,28 @@ function handleClick(e) {
       items,
       notas: document.getElementById('m_notas')?.value || '',
       totalNeto: neto,
-      totalConIva: conIva,
+      totalConIva: totalFinal,
       estado: 'vigente',
+      // Preservar descuento del presupuesto (si lo tenía)
+      ...(dtoPpto > 0 ? { descuentoPpto: dtoPpto, totalConIvaBruto: conIva } : {}),
       // Preservar campos de cierre si el presupuesto estaba cerrado
-      ...(state.editData.cerrado ? { cerrado: true, tcCierre: state.editData.tcCierre, fechaCierre: state.editData.fechaCierre } : {}),
+      // (así se puede editar un presupuesto cerrado sin tocar pagos ni reabrirlo)
+      ...(state.editData.cerrado ? { cerrado: true, tcCierre: state.editData.tcCierre || null, fechaCierre: state.editData.fechaCierre || null } : {}),
+      // Preservar alertas ya descartadas
+      ...(state.editData.notaFacturaCerrada ? { notaFacturaCerrada: true } : {}),
+      ...(state.editData.ncCerrada ? { ncCerrada: true } : {}),
     };
+    const eraEdicion = state.modal === 'editar_ppto';
     savePresupuesto(data).then(() => {
-      // Limpiar formulario pero mantener modal abierto para seguir cargando
-      state.editData = {items:[{desc:'',cantidad:1,precioUnit:''}]};
+      if(eraEdicion) {
+        // Al editar (incluso un presupuesto cerrado), cerrar el modal:
+        // los pagos y el estado de cierre quedan intactos.
+        state.modal = null;
+        state.editData = null;
+      } else {
+        // Alta nueva: limpiar formulario pero mantener modal abierto para seguir cargando
+        state.editData = {items:[{desc:'',cantidad:1,precioUnit:''}]};
+      }
       render();
     });
     return;
