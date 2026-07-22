@@ -377,6 +377,9 @@ function estadoPago(pptoId) {
   if(p.cerrado) return 'pagado';
   const total = parseFloat(p.totalConIva)||0;
   const ab = getPagosDePresupuesto(pptoId);
+  // Reabierto forzadamente: aunque los pagos cubran el total, se muestra como activo
+  // (parcial si tiene pagos) hasta que se lo marque Abonado de nuevo.
+  if(p.forzadoAbierto) return ab > 0 ? 'parcial' : 'pendiente';
   if(ab >= total - 1) return 'pagado';
   if(ab > 0) return 'parcial';
   return 'pendiente';
@@ -467,32 +470,43 @@ async function savePago(data) {
 async function toggleCerrarPpto(id) {
   const p = state.presupuestos[id];
   if(!p) return;
-  // Si el ppto aparece en "cancelados" pero no tiene flag cerrado (fue pagado automáticamente),
-  // al apretar 🔓 debe permitir "reabrir" creando un estado opuesto
-  if(!p.cerrado) {
-    // Si llegó acá significa que el usuario quiere "desmarcarlo como pagado",
-    // pero como está pagado por los pagos no podemos simplemente cambiar el flag.
-    // Le avisamos al usuario.
-    const abonado = getPagosDePresupuesto(id);
-    const total = parseFloat(p.totalConIva)||0;
-    if(abonado >= total - 1) {
-      alert('Este presupuesto está pagado porque los pagos cubren el total ($' + fmt(abonado, p.moneda) + ').\nPara reabrirlo, eliminá o reducí algún pago en la pestaña Pagos.');
-      return;
-    }
-  }
-  if(!p.cerrado) {
-    // Cerrar: guardar el TC del último pago para que quede fijo
-    const tcUltimo = getTcUltimoPago(id) || state.tcBna;
-    const confirma = confirm('¿Marcar este presupuesto como ABONADO?\n\nLa Nota de Crédito en pesos se calculará como:\n(Total facturado USD × TC factura) − (Total pagado USD × TC pago real)\n\nEsto refleja la diferencia cambiaria real.');
-    if(!confirma) return;
-    await set(ref(db, 'presupuestos/'+id), { ...p, cerrado: true, tcCierre: tcUltimo, fechaCierre: hoy() });
-    toast('✅ Presupuesto marcado como abonado');
-  } else {
+
+  // 1) Cerrado manualmente → reabrir (quita el flag de cierre, no toca pagos)
+  if(p.cerrado) {
     if(!confirm('¿Reabrir este presupuesto? Volverá a calcularse el saldo con el TC del día.')) return;
     const { cerrado, tcCierre, fechaCierre, ...rest } = p;
     await set(ref(db, 'presupuestos/'+id), rest);
     toast('🔓 Presupuesto reabierto');
+    return;
   }
+
+  const abonado = getPagosDePresupuesto(id);
+  const total = parseFloat(p.totalConIva)||0;
+
+  // 2) Reabierto forzadamente → el botón "Marcar Abonado" lo vuelve a cerrar
+  if(p.forzadoAbierto) {
+    const tcUltimo = getTcUltimoPago(id) || state.tcBna;
+    if(!confirm('¿Marcar este presupuesto como ABONADO nuevamente?')) return;
+    const { forzadoAbierto, ...rest } = p;
+    await set(ref(db, 'presupuestos/'+id), { ...rest, cerrado: true, tcCierre: tcUltimo || null, fechaCierre: hoy() });
+    toast('✅ Presupuesto marcado como abonado');
+    return;
+  }
+
+  // 3) Pagado automáticamente (los pagos cubren el total) → reabrir SIN tocar pagos
+  if(abonado >= total - 1) {
+    if(!confirm('Este presupuesto figura pagado porque los pagos cubren el total (' + fmt(abonado, p.moneda) + ').\n\n¿Querés REABRIRLO sin modificar los pagos?\n\nVolverá a la lista de presupuestos activos para que puedas editarlo. Cuando termines, marcalo como Abonado de nuevo.')) return;
+    await set(ref(db, 'presupuestos/'+id), { ...p, forzadoAbierto: true });
+    toast('🔓 Presupuesto reabierto (pagos intactos)');
+    return;
+  }
+
+  // 4) Abierto y no pagado → marcar como abonado (cierre manual)
+  const tcUltimo = getTcUltimoPago(id) || state.tcBna;
+  const confirma = confirm('¿Marcar este presupuesto como ABONADO?\n\nLa Nota de Crédito en pesos se calculará como:\n(Total facturado USD × TC factura) − (Total pagado USD × TC pago real)\n\nEsto refleja la diferencia cambiaria real.');
+  if(!confirma) return;
+  await set(ref(db, 'presupuestos/'+id), { ...p, cerrado: true, tcCierre: tcUltimo || null, fechaCierre: hoy() });
+  toast('✅ Presupuesto marcado como abonado');
 }
 
 async function deletePpto(id) {
@@ -773,6 +787,7 @@ function buildCardPpto(p) {
       </div>
       <div style="text-align:right">
         ${badge(ep)}
+        ${p.forzadoAbierto ? `<span class="badge" style="background:#fff7ed;color:#9a3412">🔓 Reabierto</span>` : ''}
         ${facts.length===0 ? badge('sin_factura') : badge('facturado')}
         ${p.descuentoPpto > 0 ? `<span class="badge" style="background:#ede9fe;color:#5b21b6">🏷️ ${p.descuentoPpto}% DTO</span>` : ''}
       </div>
@@ -1399,6 +1414,8 @@ function handleClick(e) {
       // Preservar alertas ya descartadas
       ...(state.editData.notaFacturaCerrada ? { notaFacturaCerrada: true } : {}),
       ...(state.editData.ncCerrada ? { ncCerrada: true } : {}),
+      // Preservar reapertura forzada (si estaba reabierto sin tocar pagos)
+      ...(state.editData.forzadoAbierto ? { forzadoAbierto: true } : {}),
     };
     const eraEdicion = state.modal === 'editar_ppto';
     savePresupuesto(data).then(() => {
