@@ -202,6 +202,7 @@ let state = {
   ordenFact: 'desc',      // facturas por fecha
   ordenPagos: 'desc',     // pagos por fecha
   ordenCta: 'asc',        // cta cte alfabético
+  filtroFact: 'todas',    // 'todas' | 'nc_pend'
   alertasAbiertas: false,
   tcBna: null,
 };
@@ -813,10 +814,17 @@ function buildCardPpto(p) {
 }
 
 // ── FACTURAS ─────────────────────────────────────────────────────────────
-function buildTabFacturas(facts) {
+function buildTabFacturas(factsTodas) {
+  const soloNc = state.filtroFact === 'nc_pend';
+  const facts = soloNc ? factsTodas.filter(f => ncPendienteFactura(f) > 0) : factsTodas;
   return `
+  ${soloNc ? `
+  <div style="background:#2a1a0e;border:1px solid #fb923c;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <span style="color:#fdba74;font-weight:600;font-size:13px">⏳ Mostrando solo facturas que esperan Nota de Crédito (${facts.length})</span>
+    <button class="btn-sm" data-action="fact_ver_todas" style="background:#1e2235;color:var(--muted)">✕ Ver todas las facturas</button>
+  </div>` : ''}
   <div class="section-header"><div class="section-title">Facturas Recibidas</div>${btnOrden('ordenFact')}</div>
-  ${facts.length === 0 ? '<div class="empty"><div class="empty-icon">🧾</div><div class="empty-text">No hay facturas. Cargalas desde Presupuestos.</div></div>' :
+  ${facts.length === 0 ? '<div class="empty"><div class="empty-icon">🧾</div><div class="empty-text">' + (soloNc ? '✅ No quedan facturas esperando Nota de Crédito.' : 'No hay facturas. Cargalas desde Presupuestos.') + '</div></div>' :
     [...facts].sort(ordenFecha('fechaFactura', state.ordenFact)).map(f => {
       const ppto = state.presupuestos[f.presupuestoId];
       const diff = (parseFloat(f.montoFacturado)||0) - (parseFloat(ppto?.totalConIva)||0);
@@ -1357,7 +1365,7 @@ function handleClick(e) {
   if(actionEl) t = actionEl;
 
   // Tabs
-  if(t.classList && t.classList.contains('tab-btn')) { state.tab = t.dataset.tab; render(); return; }
+  if(t.classList && t.classList.contains('tab-btn')) { state.tab = t.dataset.tab; state.filtroFact = 'todas'; render(); return; }
 
   // Nuevo presupuesto
   if(t.id === 'btnNuevoPpto') { state.modal='nuevo_ppto'; state.editData={items:[{desc:'',cantidad:1,precioUnit:''}]}; render(); return; }
@@ -1371,7 +1379,8 @@ function handleClick(e) {
     if(action==='delete') { deletePpto(id); return; }
     if(action==='toggle_cerrar') { toggleCerrarPpto(id); return; }
     if(action==='orden') { const k = t.dataset.key; state[k] = state[k]==='asc' ? 'desc' : 'asc'; render(); return; }
-    if(action==='ir_facturas') { state.tab = 'facturas'; render(); return; }
+    if(action==='ir_facturas') { state.tab = 'facturas'; state.filtroFact = 'nc_pend'; render(); return; }
+    if(action==='fact_ver_todas') { state.filtroFact = 'todas'; render(); return; }
     if(action==='nc_recibida') {
       const f = state.facturas[id]; if(!f) return;
       const nro = prompt('Registrar Nota de Crédito recibida por ' + fmt(f.descuentoMonto, f.moneda) + '\n(Factura ' + f.nroFactura + ')\n\nNúmero de NC (opcional):', '');
