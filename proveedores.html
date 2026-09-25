@@ -197,6 +197,11 @@ let state = {
   filtroProveedor: '',
   filtroEstado: 'todos',
   filtroCtaProveedor: '',
+  ordenPpto: 'desc',      // presupuestos activos por fecha
+  ordenCerrados: 'desc',  // presupuestos cancelados por fecha
+  ordenFact: 'desc',      // facturas por fecha
+  ordenPagos: 'desc',     // pagos por fecha
+  ordenCta: 'asc',        // cta cte alfabético
   alertasAbiertas: false,
   tcBna: null,
 };
@@ -371,12 +376,45 @@ function getFacturasDePresupuesto(pptoId) {
 function getPagosDeFactura(factId) {
   return Object.values(state.pagos).filter(p => p.facturaId === factId).reduce((s,p) => s + (parseFloat(p.monto)||0), 0);
 }
+// ── Descuentos de facturas ──
+// tipoDto 'incluido' → el descuento ya viene en la factura: cancela deuda al instante.
+// tipoDto 'nc' (o sin definir) → se espera Nota de Crédito: cancela deuda recién cuando ncRecibida = true.
+function creditoFactura(f) {
+  const m = parseFloat(f?.descuentoMonto) || 0;
+  if(m <= 0) return 0;
+  if(f.tipoDto === 'incluido' || f.ncRecibida) return m;
+  return 0;
+}
+function ncPendienteFactura(f) {
+  const m = parseFloat(f?.descuentoMonto) || 0;
+  return (m > 0 && f.tipoDto !== 'incluido' && !f.ncRecibida) ? m : 0;
+}
+function getCreditosDePresupuesto(pptoId) {
+  return getFacturasDePresupuesto(pptoId).reduce((s,f) => s + creditoFactura(f), 0);
+}
+function getNcPendienteDePresupuesto(pptoId) {
+  return getFacturasDePresupuesto(pptoId).reduce((s,f) => s + ncPendienteFactura(f), 0);
+}
+// Lo que ya no se debe: pagos + descuentos aplicados/NC recibidas
+function getCanceladoDePresupuesto(pptoId) {
+  return getPagosDePresupuesto(pptoId) + getCreditosDePresupuesto(pptoId);
+}
+// Ordenar por un campo de fecha (AAAA-MM-DD)
+const ordenFecha = (campo, dir) => (a,b) => { const r = (a[campo]||'').localeCompare(b[campo]||''); return dir==='asc' ? r : -r; };
+// Botón triangulito de orden
+function btnOrden(key, tipo) {
+  const asc = state[key] === 'asc';
+  const lbl = tipo === 'alfa' ? (asc ? 'A→Z ▲' : 'Z→A ▼') : (asc ? '📅 Fecha ▲' : '📅 Fecha ▼');
+  const tit = tipo === 'alfa' ? (asc ? 'Alfabético ascendente (clic para invertir)' : 'Alfabético descendente (clic para invertir)')
+                              : (asc ? 'Más antiguas primero (clic para invertir)' : 'Más recientes primero (clic para invertir)');
+  return `<button class="btn-sm" data-action="orden" data-key="${key}" title="${tit}" style="background:#1e2235;color:var(--muted);white-space:nowrap">${lbl}</button>`;
+}
 function estadoPago(pptoId) {
   const p = state.presupuestos[pptoId]; if(!p) return 'pendiente';
   // Si fue marcado como cerrado manualmente
   if(p.cerrado) return 'pagado';
   const total = parseFloat(p.totalConIva)||0;
-  const ab = getPagosDePresupuesto(pptoId);
+  const ab = getCanceladoDePresupuesto(pptoId);
   if(ab >= total - 1) return 'pagado';
   if(ab > 0) return 'parcial';
   return 'pendiente';
@@ -395,7 +433,7 @@ function getTcUltimoPago(pptoId) {
 // ABIERTO: simple conversión al TC del día.
 function saldoEnPesos(p) {
   if(p.moneda !== 'USD') return null;
-  const saldoUSD = (parseFloat(p.totalConIva)||0) - getPagosDePresupuesto(p.id);
+  const saldoUSD = (parseFloat(p.totalConIva)||0) - getCanceladoDePresupuesto(p.id);
   if(saldoUSD <= 0) return 0;
 
   if(p.cerrado) {
@@ -407,7 +445,7 @@ function saldoEnPesos(p) {
     const tcFallback = p.tcCierre || state.tcBna || 0;
     const pesosFacturado = facturas.reduce((s,f) => {
       const tc = parseFloat(f.tcFactura) || tcFallback;
-      return s + (parseFloat(f.montoFacturado)||0) * tc;
+      return s + ((parseFloat(f.montoFacturado)||0) - creditoFactura(f)) * tc;
     }, 0);
 
     // Pesos pagados: cada pago × su TC pago. Si no tiene TC, usar fallback.
@@ -473,7 +511,7 @@ async function toggleCerrarPpto(id) {
     // Si llegó acá significa que el usuario quiere "desmarcarlo como pagado",
     // pero como está pagado por los pagos no podemos simplemente cambiar el flag.
     // Le avisamos al usuario.
-    const abonado = getPagosDePresupuesto(id);
+    const abonado = getCanceladoDePresupuesto(id);
     const total = parseFloat(p.totalConIva)||0;
     if(abonado >= total - 1) {
       alert('Este presupuesto está pagado porque los pagos cubren el total ($' + fmt(abonado, p.moneda) + ').\nPara reabrirlo, eliminá o reducí algún pago en la pestaña Pagos.');
@@ -553,6 +591,7 @@ function buildHeader(np, nf, npg) {
     return faltaFacturar > 1;
   });
   const cantAlertas = alertasFactura.length;
+  const cantNcPend = Object.values(state.facturas).filter(f => ncPendienteFactura(f) > 0).length;
   return `
   <div class="header">
     <div>
@@ -567,6 +606,11 @@ function buildHeader(np, nf, npg) {
       <label title="Restaurar datos desde un archivo de respaldo (.json)" style="background:var(--bg3);color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:6px 14px;cursor:pointer;font-family:'Nunito',sans-serif;font-weight:600;font-size:12px;display:inline-flex;align-items:center;gap:6px">📂 Restaurar
         <input type="file" accept=".json,application/json" style="display:none" onchange="if(this.files[0]){ window.restaurarRespaldo(this.files[0]); this.value=''; }"/>
       </label>
+      ${cantNcPend > 0 ? `
+      <div class="stat-chip" data-action="ir_facturas" title="Facturas esperando Nota de Crédito" style="background:#2a1a0e;border-color:#fb923c;cursor:pointer">
+        <div class="num" style="color:#fb923c">⏳ ${cantNcPend}</div>
+        <div class="lbl" style="color:#fdba74">NC PEND.</div>
+      </div>` : ''}
       ${cantAlertas > 0 ? `
       <div class="stat-chip" data-action="toggle_alertas" style="background:linear-gradient(135deg,#3f1f10,#4a2818);border-color:#f59e0b;cursor:pointer;position:relative">
         <div class="num" style="color:#fbbf24">⚠️ ${cantAlertas}</div>
@@ -625,8 +669,8 @@ function buildTabPresupuestos(pptos) {
     return mp && me;
   });
   // Separar pendientes/parciales de pagados
-  const activos = filtrados.filter(p => estadoPago(p.id) !== 'pagado');
-  const pagados = filtrados.filter(p => estadoPago(p.id) === 'pagado');
+  const activos = filtrados.filter(p => estadoPago(p.id) !== 'pagado').sort(ordenFecha('fecha', state.ordenPpto));
+  const pagados = filtrados.filter(p => estadoPago(p.id) === 'pagado').sort(ordenFecha('fecha', state.ordenCerrados));
 
   return `
   <div class="section-header">
@@ -647,6 +691,7 @@ function buildTabPresupuestos(pptos) {
       <option value="parcial" ${state.filtroEstado==='parcial'?'selected':''}>Pago parcial</option>
       <option value="pagado" ${state.filtroEstado==='pagado'?'selected':''}>Pagados</option>
     </select>
+    ${btnOrden('ordenPpto')}
   </div>
   ${filtrados.length === 0 ? '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">No hay presupuestos. ¡Cargá el primero!</div></div>' : `
     ${activos.length > 0 ? activos.map(p => buildCardPpto(p)).join('') : ''}
@@ -654,7 +699,10 @@ function buildTabPresupuestos(pptos) {
       <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
         <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:8px 0" data-action="toggle_archivados">
           <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700;color:var(--green);pointer-events:none">✅ Presupuestos Cancelados (${pagados.length})</div>
-          <div style="color:var(--muted);font-size:12px;pointer-events:none">${state.archivadosAbiertos?'▼ Ocultar':'▶ Ver lista'}</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            ${state.archivadosAbiertos ? btnOrden('ordenCerrados') : ''}
+            <div style="color:var(--muted);font-size:12px;pointer-events:none">${state.archivadosAbiertos?'▼ Ocultar':'▶ Ver lista'}</div>
+          </div>
         </div>
         ${state.archivadosAbiertos ? `
           <div style="background:#0f1117;border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:8px">
@@ -690,7 +738,9 @@ function buildCardPpto(p) {
   const facts = getFacturasDePresupuesto(p.id);
   const abonado = getPagosDePresupuesto(p.id);
   const ep = estadoPago(p.id);
-  const saldo = (parseFloat(p.totalConIva)||0) - abonado;
+  const creditos = getCreditosDePresupuesto(p.id);
+  const ncPend = getNcPendienteDePresupuesto(p.id);
+  const saldo = (parseFloat(p.totalConIva)||0) - abonado - creditos;
   const items = p.items || [];
   // Calcular falta de factura
   const totalFacturado = facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0);
@@ -714,6 +764,8 @@ function buildCardPpto(p) {
       ${p.descuentoPpto > 0 && p.totalConIvaBruto ? `<div class="monto-chip"><div class="ml">Sin Dto</div><div class="mv" style="color:var(--dim);text-decoration:line-through;font-size:13px">${fmt(p.totalConIvaBruto, p.moneda)}</div></div>` : ''}
       <div class="monto-chip"><div class="ml">${p.descuentoPpto > 0 ? 'Con '+p.descuentoPpto+'% Dto' : 'Presupuesto'}</div><div class="mv" style="color:var(--accent)">${fmt(p.totalConIva, p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Abonado</div><div class="mv" style="color:var(--green)">${fmt(abonado, p.moneda)}</div></div>
+      ${creditos > 0 ? `<div class="monto-chip"><div class="ml">Dto / NC aplicada</div><div class="mv" style="color:var(--purple)">-${fmt(creditos, p.moneda)}</div></div>` : ''}
+      ${ncPend > 0 ? `<div class="monto-chip"><div class="ml">⏳ Espera NC</div><div class="mv" style="color:#fb923c">${fmt(ncPend, p.moneda)}</div></div>` : ''}
       <div class="monto-chip"><div class="ml">Total Facturado</div><div class="mv" style="color:var(--purple)">${fmt(facts.reduce((s,f)=>s+(parseFloat(f.montoFacturado)||0),0), p.moneda)}</div></div>
       <div class="monto-chip"><div class="ml">Saldo${p.moneda==='USD'&&p.cerrado?' / NC en $':''}</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${(()=>{ if(p.moneda!=='USD') return fmt(saldo,p.moneda); const sp = saldoEnPesos(p); if(sp===null) return fmt(saldo,'USD'); return fmt(saldo,'USD') + ' <span style="color:var(--dim);font-size:11px;font-family:monospace">(' + (p.cerrado?'NC: ':'') + fmt(sp,'ARS') + (p.cerrado?' dif. cambiaria':'') + ')</span>'; })()}</div></div>
     </div>
@@ -726,6 +778,11 @@ function buildCardPpto(p) {
         </div>`).join('')}
     </div>` : ''}
     ${p.notas ? `<div style="color:var(--dim);font-size:12px;margin-top:8px">📝 ${p.notas}</div>` : ''}
+    ${facts.filter(f => ncPendienteFactura(f) > 0).map(f => `
+    <div style="background:#2a1a0e;border:1px solid #fb923c;border-radius:8px;padding:8px 12px;margin-top:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <span style="color:#fdba74;font-size:12px">⏳ Fact. ${f.nroFactura}: esperando Nota de Crédito por <b>${fmt(f.descuentoMonto, f.moneda)}</b></span>
+      <button class="btn-sm" data-action="nc_recibida" data-id="${f.id}" style="background:#9a3412;color:#fff;font-size:11px">📄 NC Recibida</button>
+    </div>`).join('')}
     <div class="card-actions">
       <button class="btn-sm btn-factura" data-action="factura" data-id="${p.id}">🧾 Cargar Factura</button>
       <button class="btn-sm btn-pago" data-action="pago" data-id="${p.id}">💳 Registrar Pago</button>
@@ -739,13 +796,14 @@ function buildCardPpto(p) {
 // ── FACTURAS ─────────────────────────────────────────────────────────────
 function buildTabFacturas(facts) {
   return `
-  <div class="section-header"><div class="section-title">Facturas Recibidas</div></div>
+  <div class="section-header"><div class="section-title">Facturas Recibidas</div>${btnOrden('ordenFact')}</div>
   ${facts.length === 0 ? '<div class="empty"><div class="empty-icon">🧾</div><div class="empty-text">No hay facturas. Cargalas desde Presupuestos.</div></div>' :
-    facts.map(f => {
+    [...facts].sort(ordenFecha('fechaFactura', state.ordenFact)).map(f => {
       const ppto = state.presupuestos[f.presupuestoId];
       const diff = (parseFloat(f.montoFacturado)||0) - (parseFloat(ppto?.totalConIva)||0);
       const abonado = getPagosDeFactura(f.id);
-      const saldo = (parseFloat(f.montoFacturado)||0) - abonado;
+      const saldo = (parseFloat(f.montoFacturado)||0) - abonado - creditoFactura(f);
+      const tieneDto = (parseFloat(f.descuentoMonto)||0) > 0;
       return `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
@@ -756,6 +814,9 @@ function buildTabFacturas(facts) {
           </div>
           <div style="text-align:right">
             ${f.hayDiferencia ? badge('diferencia') : ''}
+            ${tieneDto && f.tipoDto==='incluido' ? '<span class="badge" style="background:#ede9fe;color:#5b21b6">🏷️ Dto en factura</span>' : ''}
+            ${ncPendienteFactura(f) > 0 ? '<span class="badge" style="background:#ffedd5;color:#9a3412">⏳ Espera NC</span>' : ''}
+            ${tieneDto && f.tipoDto!=='incluido' && f.ncRecibida ? '<span class="badge" style="background:#d1fae5;color:#065f46">📄 NC '+(f.ncNro||'recibida')+'</span>' : ''}
             ${saldo<=1 ? badge('pagado') : abonado>0 ? badge('parcial') : badge('pendiente')}
           </div>
         </div>
@@ -769,6 +830,8 @@ function buildTabFacturas(facts) {
         ${f.notas ? `<div style="color:var(--dim);font-size:12px;margin-top:8px">📝 ${f.notas}</div>` : ''}
         <div class="card-actions">
           ${saldo>1 ? `<button class="btn-sm btn-pago" data-action="pago_factura" data-fid="${f.id}" data-pid="${f.presupuestoId}">💳 Registrar Pago</button>` : ''}
+          ${ncPendienteFactura(f) > 0 ? `<button class="btn-sm" data-action="nc_recibida" data-id="${f.id}" style="background:#9a3412;color:#fff">📄 NC Recibida</button>` : ''}
+          ${tieneDto && f.tipoDto!=='incluido' && f.ncRecibida ? `<button class="btn-sm" data-action="nc_anular" data-id="${f.id}" style="background:#1e2235;color:var(--muted)">↩ Anular NC</button>` : ''}
           <button class="btn-sm btn-edit" data-action="edit_factura" data-id="${f.id}">✏ Editar Factura</button>
           <button class="btn-sm btn-delete" data-action="delete_factura" data-id="${f.id}">🗑 Eliminar Factura</button>
         </div>
@@ -779,9 +842,9 @@ function buildTabFacturas(facts) {
 // ── PAGOS ─────────────────────────────────────────────────────────────────
 function buildTabPagos(pgs) {
   return `
-  <div class="section-header"><div class="section-title">Comprobantes de Pago</div></div>
+  <div class="section-header"><div class="section-title">Comprobantes de Pago</div>${btnOrden('ordenPagos')}</div>
   ${pgs.length === 0 ? '<div class="empty"><div class="empty-icon">💳</div><div class="empty-text">No hay pagos registrados.</div></div>' :
-    pgs.map(pg => {
+    [...pgs].sort(ordenFecha('fechaPago', state.ordenPagos)).map(pg => {
       const ppto = state.presupuestos[pg.presupuestoId];
       const fact = pg.facturaId ? state.facturas[pg.facturaId] : null;
       return `
@@ -810,10 +873,12 @@ function buildTabCta(proveedores) {
   const proveedoresFiltrados = state.filtroCtaProveedor
     ? proveedores.filter(p => p.toLowerCase().includes(state.filtroCtaProveedor.toLowerCase()))
     : proveedores;
+  proveedoresFiltrados.sort((a,b) => state.ordenCta==='asc' ? a.localeCompare(b,'es') : b.localeCompare(a,'es'));
   return `
   <div class="section-header"><div class="section-title">Cuenta Corriente por Proveedor</div></div>
   <div class="filters" style="margin-bottom:16px">
     <input style="max-width:280px" placeholder="🔍 Buscar proveedor…" id="filtCtaProv" value="${state.filtroCtaProveedor||''}"/>
+    ${btnOrden('ordenCta','alfa')}
   </div>
 
   ${(()=>{
@@ -824,17 +889,19 @@ function buildTabCta(proveedores) {
 
     const totalArs = pptosArs.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
     const abArs = pptosArs.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
-    const saldoArs = totalArs - abArs;
+    const credArs = pptosArs.reduce((s,p)=>s+getCreditosDePresupuesto(p.id),0);
+    const saldoArs = totalArs - abArs - credArs;
 
     const totalUsd = pptosUsd.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
     const abUsd = pptosUsd.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
-    const saldoUsd = totalUsd - abUsd;
+    const credUsd = pptosUsd.reduce((s,p)=>s+getCreditosDePresupuesto(p.id),0);
+    const saldoUsd = totalUsd - abUsd - credUsd;
     // Saldo USD convertido a pesos al TC del día
     const saldoUsdEnArs = state.tcBna ? saldoUsd * state.tcBna : null;
 
     // % global ponderado (en pesos equivalente)
     const totalPesosEquiv = totalArs + (state.tcBna ? totalUsd * state.tcBna : 0);
-    const abPesosEquiv = abArs + (state.tcBna ? abUsd * state.tcBna : 0);
+    const abPesosEquiv = (abArs + credArs) + (state.tcBna ? (abUsd + credUsd) * state.tcBna : 0);
     const pctGen = totalPesosEquiv>0 ? Math.min(Math.round((abPesosEquiv/totalPesosEquiv)*100),100) : 0;
 
     return `
@@ -875,10 +942,12 @@ function buildTabCta(proveedores) {
     const moneda = pptos[0]?.moneda||'ARS';
     const totalPpto = pptos.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
     const totalAb = pptos.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
-    const saldo = totalPpto - totalAb;
+    const totalCred = pptos.reduce((s,p)=>s+getCreditosDePresupuesto(p.id),0);
+    const totalNcPend = pptos.reduce((s,p)=>s+getNcPendienteDePresupuesto(p.id),0);
+    const saldo = totalPpto - totalAb - totalCred;
     // Saldo en pesos: cada ppto USD usa su TC correcto (fijo si cerrado, día si no)
     const saldoEnPesosProv = moneda==='USD' ? pptos.reduce((s,p)=>{ const sp = saldoEnPesos(p); return s + (sp||0); }, 0) : null;
-    const pct = totalPpto > 0 ? Math.min(Math.round((totalAb/totalPpto)*100),100) : 0;
+    const pct = totalPpto > 0 ? Math.min(Math.round(((totalAb+totalCred)/totalPpto)*100),100) : 0;
     const ep = saldo<=1?'pagado':totalAb>0?'parcial':'pendiente';
     const pagosProv = Object.values(state.pagos).filter(pg=>pptos.some(p=>p.id===pg.presupuestoId));
     return `
@@ -896,6 +965,8 @@ function buildTabCta(proveedores) {
         <div class="monto-chip"><div class="ml">Total Abonado (${moneda})</div><div class="mv" style="color:var(--green)">${fmt(totalAb,moneda)}</div></div>
         ${moneda==='USD' ? `<div class="monto-chip"><div class="ml">Abonado en $ARS (real)</div><div class="mv" style="color:var(--green);font-size:12px">${fmt(pagosProv.reduce((s,pg)=>s+(pg.montoPesos||0),0),'ARS')}</div></div>` : ''}
         <div class="monto-chip"><div class="ml">Saldo Pendiente (${moneda})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(Math.max(saldo,0),moneda)}</div></div>
+        ${totalCred > 0 ? `<div class="monto-chip"><div class="ml">Dto / NC aplicada</div><div class="mv" style="color:var(--purple)">-${fmt(totalCred,moneda)}</div></div>` : ''}
+        ${totalNcPend > 0 ? `<div class="monto-chip"><div class="ml">⏳ De ese saldo, espera NC</div><div class="mv" style="color:#fb923c">${fmt(totalNcPend,moneda)}</div></div>` : ''}
         ${moneda==='USD' && state.tcBna && saldo>1 ? `<div class="monto-chip"><div class="ml">Saldo en $ARS (TC $${state.tcBna})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'};font-size:12px">${fmt(saldo*state.tcBna,'ARS')}</div></div>` : ''}
         ${moneda==='USD' && saldoEnPesosProv!==null && saldoEnPesosProv>0 ? `<div class="monto-chip"><div class="ml">NC en $ARS (cerrados)</div><div class="mv" style="color:var(--purple);font-size:12px">${fmt(saldoEnPesosProv,'ARS')}</div></div>` : ''}
       </div>
@@ -904,7 +975,7 @@ function buildTabCta(proveedores) {
       <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
         ${pptos.map(p => {
           const ab = getPagosDePresupuesto(p.id);
-          const sl = (parseFloat(p.totalConIva)||0) - ab;
+          const sl = (parseFloat(p.totalConIva)||0) - ab - getCreditosDePresupuesto(p.id);
           const facts = getFacturasDePresupuesto(p.id);
           return `
           <div class="cta-row">
@@ -1026,8 +1097,23 @@ function buildModal() {
       <div class="field"><label class="field-label">Descuento %</label><input type="number" id="f_dto_pct" value="0" min="0" max="100" step="0.01" oninput="calcFacturaDto()"/></div>
       <div class="field"><label class="field-label">Monto Descuento</label><input type="number" id="f_dto_monto" min="0" step="0.01" placeholder="Auto o manual" oninput="calcFacturaDto('monto')" style="color:var(--yellow);font-weight:700"/></div>
     </div>
+    <div class="field">
+      <label class="field-label">Tipo de descuento</label>
+      <select id="f_tipo_dto" onchange="window.toggleNcFields()">
+        <option value="nc" ${d.tipoDto!=='incluido'?'selected':''}>⏳ Espero Nota de Crédito (queda saldo hasta recibirla)</option>
+        <option value="incluido" ${d.tipoDto==='incluido'?'selected':''}>✅ Ya viene descontado en la factura (sin NC)</option>
+      </select>
+      <div style="color:var(--dim);font-size:11px;margin-top:4px">Solo aplica si hay descuento. El Monto Facturado es el importe ANTES del descuento.</div>
+    </div>
+    <div class="grid-2" id="f_nc_row" style="${d.tipoDto==='incluido'?'display:none':''}">
+      <div class="field" style="display:flex;align-items:center;gap:8px;padding-top:22px">
+        <input type="checkbox" id="f_nc_recibida" ${d.ncRecibida?'checked':''} style="width:18px;height:18px;cursor:pointer"/>
+        <label for="f_nc_recibida" style="color:var(--muted);font-size:13px;cursor:pointer">📄 Nota de Crédito ya recibida</label>
+      </div>
+      <div class="field"><label class="field-label">Nro. Nota de Crédito</label><input id="f_nc_nro" value="${d.ncNro||''}" placeholder="Opcional"/></div>
+    </div>
     <div id="dto_resumen" style="background:#0f1117;border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px;display:none">
-      <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-family:monospace;margin-bottom:6px">Saldo después del descuento (para Nota de Crédito)</div>
+      <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-family:monospace;margin-bottom:6px">Saldo después del descuento</div>
       <div id="dto_saldo" style="font-family:monospace;font-weight:700"></div>
     </div>
     <div id="diff-alert"></div>
@@ -1043,7 +1129,7 @@ function buildModal() {
     const factura = d.facturaId ? state.facturas[d.facturaId] : null;
     const yaAbonado = getPagosDePresupuesto(d.presupuestoId);
     const total = parseFloat(factura?.montoFacturado || ppto?.totalConIva) || 0;
-    const saldo = total - yaAbonado;
+    const saldo = total - yaAbonado - (factura ? creditoFactura(factura) : getCreditosDePresupuesto(d.presupuestoId));
     const moneda = factura?.moneda || ppto?.moneda || 'ARS';
     title = 'Asentar Pago';
     content = `
@@ -1053,7 +1139,7 @@ function buildModal() {
       ${factura?`<div style="color:var(--muted);font-size:13px">Factura: ${factura.nroFactura}${factura.descuentoPct>0?` · 🏷️ Tiene ${factura.descuentoPct}% dto`:''}</div>`:''}
       <div style="color:var(--yellow);font-weight:700;margin-top:4px">Saldo pendiente: ${fmt(saldo, moneda)}</div>
     </div>
-    ${factura && factura.descuentoPct > 0 ? `
+    ${factura && factura.descuentoPct > 0 && ncPendienteFactura(factura) > 0 ? `
     <div style="background:#1a1d35;border:1px solid var(--purple);border-radius:10px;padding:12px;margin-bottom:14px">
       <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
         <input type="checkbox" id="aplicar_dto" onchange="aplicarDescuento(${factura.descuentoPct}, ${factura.montoFacturado}, '${factura.moneda}', ${factura.tcFactura||state.tcBna||0})" style="width:18px;height:18px;cursor:pointer"/>
@@ -1069,7 +1155,7 @@ function buildModal() {
     </div>` : ''}
     <div class="grid-2">
       <div class="field"><label class="field-label">Fecha de Pago</label><input type="date" id="p_fecha" value="${hoy()}"/></div>
-      <div class="field"><label class="field-label">Monto Abonado (${moneda})</label><input type="number" id="p_monto" value="${saldo>0?saldo:''}" oninput="calcPesosPago()"/></div>
+      <div class="field"><label class="field-label">Monto Abonado (${moneda})</label><input type="number" id="p_monto" value="${saldo>0?(Math.round(saldo*100)/100):''}" oninput="calcPesosPago()"/></div>
     </div>
     ${moneda==='USD' ? `
     <div class="grid-2">
@@ -1127,8 +1213,23 @@ function buildModal() {
       <div class="field"><label class="field-label">Descuento %</label><input type="number" id="f_dto_pct" value="${d.descuentoPct||0}" min="0" max="100" step="0.01" oninput="calcFacturaDto()"/></div>
       <div class="field"><label class="field-label">Monto Descuento</label><input type="number" id="f_dto_monto" value="${d.descuentoMonto?(+d.descuentoMonto).toFixed(2):''}" min="0" step="0.01" placeholder="Auto o manual" oninput="calcFacturaDto('monto')" style="color:var(--yellow);font-weight:700"/></div>
     </div>
+    <div class="field">
+      <label class="field-label">Tipo de descuento</label>
+      <select id="f_tipo_dto" onchange="window.toggleNcFields()">
+        <option value="nc" ${d.tipoDto!=='incluido'?'selected':''}>⏳ Espero Nota de Crédito (queda saldo hasta recibirla)</option>
+        <option value="incluido" ${d.tipoDto==='incluido'?'selected':''}>✅ Ya viene descontado en la factura (sin NC)</option>
+      </select>
+      <div style="color:var(--dim);font-size:11px;margin-top:4px">Solo aplica si hay descuento. El Monto Facturado es el importe ANTES del descuento.</div>
+    </div>
+    <div class="grid-2" id="f_nc_row" style="${d.tipoDto==='incluido'?'display:none':''}">
+      <div class="field" style="display:flex;align-items:center;gap:8px;padding-top:22px">
+        <input type="checkbox" id="f_nc_recibida" ${d.ncRecibida?'checked':''} style="width:18px;height:18px;cursor:pointer"/>
+        <label for="f_nc_recibida" style="color:var(--muted);font-size:13px;cursor:pointer">📄 Nota de Crédito ya recibida</label>
+      </div>
+      <div class="field"><label class="field-label">Nro. Nota de Crédito</label><input id="f_nc_nro" value="${d.ncNro||''}" placeholder="Opcional"/></div>
+    </div>
     <div id="dto_resumen" style="background:#0f1117;border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px;display:none">
-      <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-family:monospace;margin-bottom:6px">Saldo después del descuento (para Nota de Crédito)</div>
+      <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-family:monospace;margin-bottom:6px">Saldo después del descuento</div>
       <div id="dto_saldo" style="font-family:monospace;font-weight:700"></div>
     </div>
     <div id="diff-alert"></div>
@@ -1250,6 +1351,23 @@ function handleClick(e) {
     const pid = t.dataset.pid;
     if(action==='delete') { deletePpto(id); return; }
     if(action==='toggle_cerrar') { toggleCerrarPpto(id); return; }
+    if(action==='orden') { const k = t.dataset.key; state[k] = state[k]==='asc' ? 'desc' : 'asc'; render(); return; }
+    if(action==='ir_facturas') { state.tab = 'facturas'; render(); return; }
+    if(action==='nc_recibida') {
+      const f = state.facturas[id]; if(!f) return;
+      const nro = prompt('Registrar Nota de Crédito recibida por ' + fmt(f.descuentoMonto, f.moneda) + '\n(Factura ' + f.nroFactura + ')\n\nNúmero de NC (opcional):', '');
+      if(nro === null) return;
+      set(ref(db, 'facturas/'+id), { ...f, tipoDto: 'nc', ncRecibida: true, ncNro: nro.trim(), ncFecha: hoy() })
+        .then(() => toast('📄 NC registrada — saldo cancelado'));
+      return;
+    }
+    if(action==='nc_anular') {
+      const f = state.facturas[id]; if(!f) return;
+      if(!confirm('¿Anular la NC registrada en la factura ' + f.nroFactura + '?\nEl importe del descuento vuelve a figurar como saldo pendiente.')) return;
+      set(ref(db, 'facturas/'+id), { ...f, ncRecibida: false, ncNro: '', ncFecha: null })
+        .then(() => toast('↩ NC anulada'));
+      return;
+    }
     if(action==='toggle_archivados') { state.archivadosAbiertos = !state.archivadosAbiertos; render(); return; }
     if(action==='toggle_alertas') { state.alertasAbiertas = !state.alertasAbiertas; render(); return; }
     if(action==='cerrar_nota_factura') {
@@ -1341,6 +1459,9 @@ function handleClick(e) {
     const descuentoPct = parseFloat(document.getElementById('f_dto_pct')?.value) || 0;
     const dtoMontoCampo = parseFloat(document.getElementById('f_dto_monto')?.value);
     const descuentoMonto = !isNaN(dtoMontoCampo) ? dtoMontoCampo : (monto * descuentoPct / 100);
+    const tipoDto = document.getElementById('f_tipo_dto')?.value || 'nc';
+    const ncRecibida = tipoDto === 'nc' && !!document.getElementById('f_nc_recibida')?.checked;
+    const ncNro = ncRecibida ? (document.getElementById('f_nc_nro')?.value || '').trim() : '';
     const montoFinal = monto - descuentoMonto;
     saveFactura({
       presupuestoId: presupuestoIdActual,
@@ -1352,6 +1473,10 @@ function handleClick(e) {
       descuentoPct,
       descuentoMonto,
       montoFinal,
+      tipoDto,
+      ncRecibida,
+      ncNro,
+      ncFecha: ncRecibida ? hoy() : null,
       moneda: monedaActual,
       hayDiferencia: Math.abs(diff)>1,
       diferencia: diff,
@@ -1408,6 +1533,9 @@ function handleClick(e) {
     const dtoPctU = parseFloat(document.getElementById('f_dto_pct')?.value) || 0;
     const dtoMontoCampoU = parseFloat(document.getElementById('f_dto_monto')?.value);
     const dtoMontoU = !isNaN(dtoMontoCampoU) ? dtoMontoCampoU : (monto * dtoPctU / 100);
+    const tipoDtoU = document.getElementById('f_tipo_dto')?.value || 'nc';
+    const ncRecibidaU = tipoDtoU === 'nc' && !!document.getElementById('f_nc_recibida')?.checked;
+    const ncNroU = ncRecibidaU ? (document.getElementById('f_nc_nro')?.value || '').trim() : '';
     const updated = {
       ...state.editData,
       nroFactura: nro,
@@ -1417,6 +1545,10 @@ function handleClick(e) {
       montoPesos: tcFactU ? monto * tcFactU : null,
       descuentoPct: dtoPctU,
       descuentoMonto: dtoMontoU,
+      tipoDto: tipoDtoU,
+      ncRecibida: ncRecibidaU,
+      ncNro: ncNroU,
+      ncFecha: ncRecibidaU ? (state.editData.ncFecha || hoy()) : null,
       montoFinal: monto - dtoMontoU,
       moneda: document.getElementById('f_moneda')?.value,
       hayDiferencia: Math.abs(diff)>1,
@@ -1507,6 +1639,12 @@ function updateTotals() {
   const tiLabel = document.getElementById('t-iva-label');
   if(tiLabel) tiLabel.textContent = 'IVA ' + (tipoIva==='10.5'?'10.5':'21') + '%:';
 }
+
+window.toggleNcFields = function() {
+  const tipo = document.getElementById('f_tipo_dto')?.value;
+  const row = document.getElementById('f_nc_row');
+  if(row) row.style.display = tipo === 'incluido' ? 'none' : '';
+};
 
 window.toggleFactTcField = function(val) {
   const row = document.getElementById('f_tc_row');
