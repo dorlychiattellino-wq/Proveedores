@@ -376,6 +376,25 @@ function getFacturasDePresupuesto(pptoId) {
 function getPagosDeFactura(factId) {
   return Object.values(state.pagos).filter(p => p.facturaId === factId).reduce((s,p) => s + (parseFloat(p.monto)||0), 0);
 }
+// Abonado de una factura = pagos hechos desde esa factura
+// + su parte de los pagos hechos desde el presupuesto (sin factura),
+// repartidos entre las facturas del presupuesto de la más antigua a la más nueva.
+function getAbonadoFactura(f) {
+  const facts = getFacturasDePresupuesto(f.presupuestoId)
+    .sort((a,b) => (a.fechaFactura||'').localeCompare(b.fechaFactura||'') || (a.nroFactura||'').localeCompare(b.nroFactura||''));
+  const idsFact = new Set(facts.map(x => x.id));
+  let pozo = Object.values(state.pagos)
+    .filter(pg => pg.presupuestoId === f.presupuestoId && !(pg.facturaId && idsFact.has(pg.facturaId)))
+    .reduce((s,pg) => s + (parseFloat(pg.monto)||0), 0);
+  for(const x of facts) {
+    const directo = getPagosDeFactura(x.id);
+    const falta = Math.max((parseFloat(x.montoFacturado)||0) - creditoFactura(x) - directo, 0);
+    const asignado = Math.min(pozo, falta);
+    pozo -= asignado;
+    if(x.id === f.id) return directo + asignado;
+  }
+  return getPagosDeFactura(f.id);
+}
 // ── Descuentos de facturas ──
 // tipoDto 'incluido' → el descuento ya viene en la factura: cancela deuda al instante.
 // tipoDto 'nc' (o sin definir) → se espera Nota de Crédito: cancela deuda recién cuando ncRecibida = true.
@@ -801,7 +820,7 @@ function buildTabFacturas(facts) {
     [...facts].sort(ordenFecha('fechaFactura', state.ordenFact)).map(f => {
       const ppto = state.presupuestos[f.presupuestoId];
       const diff = (parseFloat(f.montoFacturado)||0) - (parseFloat(ppto?.totalConIva)||0);
-      const abonado = getPagosDeFactura(f.id);
+      const abonado = getAbonadoFactura(f);
       const saldo = (parseFloat(f.montoFacturado)||0) - abonado - creditoFactura(f);
       const tieneDto = (parseFloat(f.descuentoMonto)||0) > 0;
       return `
