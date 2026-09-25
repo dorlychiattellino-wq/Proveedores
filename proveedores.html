@@ -203,6 +203,7 @@ let state = {
   ordenPagos: 'desc',     // pagos por fecha
   ordenCta: 'asc',        // cta cte alfabético
   filtroFact: 'todas',    // 'todas' | 'nc_pend'
+  filtroCtaEstado: 'todos', // cta cte: todos | pendiente | parcial | pagado | nc_pend
   alertasAbiertas: false,
   tcBna: null,
 };
@@ -897,16 +898,36 @@ function buildTabPagos(pgs) {
 function buildTabCta(proveedores) {
   if(proveedores.length === 0) return '<div class="empty"><div class="empty-icon">📊</div><div class="empty-text">No hay proveedores cargados aún.</div></div>';
   // Aplicar filtro de búsqueda
-  const proveedoresFiltrados = state.filtroCtaProveedor
-    ? proveedores.filter(p => p.toLowerCase().includes(state.filtroCtaProveedor.toLowerCase()))
-    : proveedores;
+  // Estado de pago de un proveedor (mismo criterio que la tarjeta)
+  const estadoProv = prov => {
+    const pp = Object.values(state.presupuestos).filter(p => p.proveedor === prov);
+    const total = pp.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
+    const ab = pp.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
+    const cred = pp.reduce((s,p)=>s+getCreditosDePresupuesto(p.id),0);
+    const sal = total - ab - cred;
+    return sal<=1 ? 'pagado' : ab>0 ? 'parcial' : 'pendiente';
+  };
+  const provConNcPend = prov => Object.values(state.presupuestos)
+    .filter(p => p.proveedor === prov).some(p => getNcPendienteDePresupuesto(p.id) > 0);
+  const fe = state.filtroCtaEstado || 'todos';
+  const proveedoresFiltrados = proveedores
+    .filter(p => !state.filtroCtaProveedor || p.toLowerCase().includes(state.filtroCtaProveedor.toLowerCase()))
+    .filter(p => fe === 'todos' ? true : fe === 'nc_pend' ? provConNcPend(p) : estadoProv(p) === fe);
   proveedoresFiltrados.sort((a,b) => state.ordenCta==='asc' ? a.localeCompare(b,'es') : b.localeCompare(a,'es'));
   return `
   <div class="section-header"><div class="section-title">Cuenta Corriente por Proveedor</div></div>
   <div class="filters" style="margin-bottom:16px">
     <input style="max-width:280px" placeholder="🔍 Buscar proveedor…" id="filtCtaProv" value="${state.filtroCtaProveedor||''}"/>
+    <select style="max-width:200px" id="filtCtaEst">
+      <option value="todos" ${fe==='todos'?'selected':''}>Todos los estados</option>
+      <option value="pendiente" ${fe==='pendiente'?'selected':''}>Pendiente</option>
+      <option value="parcial" ${fe==='parcial'?'selected':''}>Pago parcial</option>
+      <option value="pagado" ${fe==='pagado'?'selected':''}>Pagado</option>
+      <option value="nc_pend" ${fe==='nc_pend'?'selected':''}>⏳ Espera NC</option>
+    </select>
     ${btnOrden('ordenCta','alfa')}
   </div>
+  ${proveedoresFiltrados.length === 0 ? '<div class="empty" style="padding:24px"><div class="empty-text">No hay proveedores con ese estado.</div></div>' : ''}
 
   ${(()=>{
     const todosLosPptos = Object.values(state.presupuestos);
@@ -1648,6 +1669,7 @@ function handleInput(e) {
 function handleChange(e) {
   const t = e.target;
   if(t.id === 'filtEst') { state.filtroEstado = t.value; render(); return; }
+  if(t.id === 'filtCtaEst') { state.filtroCtaEstado = t.value; render(); return; }
   if(t.id === 'm_iva') { state.editData.tipoIva = t.value; state.editData.ivaIncluido = t.value==='incluido'; updateTotals(); return; }
   if(t.id === 'm_moneda') { state.editData.moneda = t.value; updateTotals(); return; }
 }
