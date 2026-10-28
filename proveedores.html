@@ -750,7 +750,7 @@ function buildTabPresupuestos(pptos) {
                   <div style="color:var(--dim);font-size:11px;font-family:monospace">📅 ${p.fecha} · ${facts.length>0?'Fact: '+facts.map(f=>f.nroFactura).join(', '):'Sin factura'}${p.cerrado&&p.tcCierre?' · TC cierre: $'+p.tcCierre:''}</div>
                 </div>
                 <div style="color:var(--green);font-weight:700;font-size:13px;font-family:monospace;pointer-events:none">${p.cerrado?'✅ Abonado':'✅'} ${fmt(p.totalConIva, p.moneda)}</div>
-                <div style="display:flex;gap:4px" onclick="event.stopPropagation()">
+                <div style="display:flex;gap:4px">
                   <button class="btn-sm" data-action="toggle_cerrar" data-id="${p.id}" style="font-size:11px;padding:4px 8px;background:#7c2d12;color:#fff" title="Reabrir presupuesto">🔓</button>
                   <button class="btn-sm btn-edit" data-action="edit" data-id="${p.id}" style="font-size:11px;padding:4px 8px">✏</button>
                   <button class="btn-sm btn-delete" data-action="delete" data-id="${p.id}" style="font-size:11px;padding:4px 8px">🗑</button>
