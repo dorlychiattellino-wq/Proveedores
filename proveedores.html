@@ -420,6 +420,16 @@ function getNcPendienteDePresupuesto(pptoId) {
 function getCanceladoDePresupuesto(pptoId) {
   return getPagosDePresupuesto(pptoId) + getCreditosDePresupuesto(pptoId);
 }
+// Saldo real pendiente de un presupuesto: nunca negativo, y 0 si fue marcado como abonado
+function saldoPpto(p) {
+  if(p.cerrado) return 0;
+  return Math.max((parseFloat(p.totalConIva)||0) - getCanceladoDePresupuesto(p.id), 0);
+}
+// Pagado de más (saldo negativo) de un presupuesto
+function excesoPpto(p) {
+  const s = (parseFloat(p.totalConIva)||0) - getCanceladoDePresupuesto(p.id);
+  return s < -1 ? -s : 0;
+}
 // Ordenar por un campo de fecha (AAAA-MM-DD)
 const ordenFecha = (campo, dir) => (a,b) => { const r = (a[campo]||'').localeCompare(b[campo]||''); return dir==='asc' ? r : -r; };
 // Botón triangulito de orden
@@ -904,7 +914,7 @@ function buildTabCta(proveedores) {
     const total = pp.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
     const ab = pp.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
     const cred = pp.reduce((s,p)=>s+getCreditosDePresupuesto(p.id),0);
-    const sal = total - ab - cred;
+    const sal = pp.reduce((s,p)=>s+saldoPpto(p),0);
     return sal<=1 ? 'pagado' : ab>0 ? 'parcial' : 'pendiente';
   };
   const provConNcPend = prov => Object.values(state.presupuestos)
@@ -938,19 +948,22 @@ function buildTabCta(proveedores) {
     const totalArs = pptosArs.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
     const abArs = pptosArs.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
     const credArs = pptosArs.reduce((s,p)=>s+getCreditosDePresupuesto(p.id),0);
-    const saldoArs = totalArs - abArs - credArs;
+    const saldoArs = pptosArs.reduce((s,p)=>s+saldoPpto(p),0);
+    const excesoArs = pptosArs.reduce((s,p)=>s+excesoPpto(p),0);
 
     const totalUsd = pptosUsd.reduce((s,p)=>s+(parseFloat(p.totalConIva)||0),0);
     const abUsd = pptosUsd.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
     const credUsd = pptosUsd.reduce((s,p)=>s+getCreditosDePresupuesto(p.id),0);
-    const saldoUsd = totalUsd - abUsd - credUsd;
+    const saldoUsd = pptosUsd.reduce((s,p)=>s+saldoPpto(p),0);
+    const excesoUsd = pptosUsd.reduce((s,p)=>s+excesoPpto(p),0);
     // Saldo USD convertido a pesos al TC del día
     const saldoUsdEnArs = state.tcBna ? saldoUsd * state.tcBna : null;
 
     // % global ponderado (en pesos equivalente)
     const totalPesosEquiv = totalArs + (state.tcBna ? totalUsd * state.tcBna : 0);
     const abPesosEquiv = (abArs + credArs) + (state.tcBna ? (abUsd + credUsd) * state.tcBna : 0);
-    const pctGen = totalPesosEquiv>0 ? Math.min(Math.round((abPesosEquiv/totalPesosEquiv)*100),100) : 0;
+    const saldoPesosEquiv = saldoArs + (state.tcBna ? saldoUsd * state.tcBna : 0);
+    const pctGen = totalPesosEquiv>0 ? Math.min(Math.round(((totalPesosEquiv - saldoPesosEquiv)/totalPesosEquiv)*100),100) : 0;
 
     return `
     <div style="background:linear-gradient(135deg,#1a1d35,#12162a);border:2px solid var(--accent);border-radius:16px;padding:20px;margin-bottom:24px">
@@ -962,7 +975,8 @@ function buildTabCta(proveedores) {
         <div class="montos" style="gap:24px">
           <div class="monto-chip"><div class="ml">Presupuestado</div><div class="mv" style="color:var(--accent);font-size:16px">${fmt(totalArs,'ARS')}</div></div>
           <div class="monto-chip"><div class="ml">Abonado</div><div class="mv" style="color:var(--green);font-size:16px">${fmt(abArs,'ARS')}</div></div>
-          <div class="monto-chip"><div class="ml">Saldo Pendiente</div><div class="mv" style="color:${saldoArs>1?'var(--yellow)':'var(--green)'};font-size:16px">${fmt(Math.max(saldoArs,0),'ARS')}</div></div>
+          <div class="monto-chip"><div class="ml">Saldo Pendiente</div><div class="mv" style="color:${saldoArs>1?'var(--yellow)':'var(--green)'};font-size:16px">${fmt(saldoArs,'ARS')}</div></div>
+          ${excesoArs > 1 ? `<div class="monto-chip"><div class="ml">Pagado de más</div><div class="mv" style="color:var(--red);font-size:14px">${fmt(excesoArs,'ARS')}</div></div>` : ''}
         </div>
       </div>` : ''}
 
@@ -972,7 +986,8 @@ function buildTabCta(proveedores) {
         <div class="montos" style="gap:24px">
           <div class="monto-chip"><div class="ml">Presupuestado USD</div><div class="mv" style="color:var(--accent);font-size:16px">${fmt(totalUsd,'USD')}</div></div>
           <div class="monto-chip"><div class="ml">Abonado USD</div><div class="mv" style="color:var(--green);font-size:16px">${fmt(abUsd,'USD')}</div></div>
-          <div class="monto-chip"><div class="ml">Saldo Pendiente USD</div><div class="mv" style="color:${saldoUsd>1?'var(--yellow)':'var(--green)'};font-size:16px">${fmt(Math.max(saldoUsd,0),'USD')}</div></div>
+          <div class="monto-chip"><div class="ml">Saldo Pendiente USD</div><div class="mv" style="color:${saldoUsd>1?'var(--yellow)':'var(--green)'};font-size:16px">${fmt(saldoUsd,'USD')}</div></div>
+          ${excesoUsd > 1 ? `<div class="monto-chip"><div class="ml">Pagado de más</div><div class="mv" style="color:var(--red);font-size:14px">${fmt(excesoUsd,'USD')}</div></div>` : ''}
           ${state.tcBna ? `<div class="monto-chip"><div class="ml">Saldo equiv. en $ARS (TC $${state.tcBna})</div><div class="mv" style="color:${saldoUsd>1?'var(--yellow)':'var(--green)'};font-size:15px">${fmt(Math.max(saldoUsdEnArs,0),'ARS')}</div></div>` : ''}
         </div>
       </div>` : ''}
@@ -992,10 +1007,11 @@ function buildTabCta(proveedores) {
     const totalAb = pptos.reduce((s,p)=>s+getPagosDePresupuesto(p.id),0);
     const totalCred = pptos.reduce((s,p)=>s+getCreditosDePresupuesto(p.id),0);
     const totalNcPend = pptos.reduce((s,p)=>s+getNcPendienteDePresupuesto(p.id),0);
-    const saldo = totalPpto - totalAb - totalCred;
+    const saldo = pptos.reduce((s,p)=>s+saldoPpto(p),0);
+    const exceso = pptos.reduce((s,p)=>s+excesoPpto(p),0);
     // Saldo en pesos: cada ppto USD usa su TC correcto (fijo si cerrado, día si no)
     const saldoEnPesosProv = moneda==='USD' ? pptos.reduce((s,p)=>{ const sp = saldoEnPesos(p); return s + (sp||0); }, 0) : null;
-    const pct = totalPpto > 0 ? Math.min(Math.round(((totalAb+totalCred)/totalPpto)*100),100) : 0;
+    const pct = totalPpto > 0 ? Math.min(Math.round(((totalPpto-saldo)/totalPpto)*100),100) : 0;
     const ep = saldo<=1?'pagado':totalAb>0?'parcial':'pendiente';
     const pagosProv = Object.values(state.pagos).filter(pg=>pptos.some(p=>p.id===pg.presupuestoId));
     return `
@@ -1012,7 +1028,8 @@ function buildTabCta(proveedores) {
         ${moneda==='USD' && state.tcBna ? `<div class="monto-chip"><div class="ml">Equivalente en $ARS (TC $${state.tcBna})</div><div class="mv" style="color:var(--accent);font-size:12px">${fmt(totalPpto*state.tcBna,'ARS')}</div></div>` : ''}
         <div class="monto-chip"><div class="ml">Total Abonado (${moneda})</div><div class="mv" style="color:var(--green)">${fmt(totalAb,moneda)}</div></div>
         ${moneda==='USD' ? `<div class="monto-chip"><div class="ml">Abonado en $ARS (real)</div><div class="mv" style="color:var(--green);font-size:12px">${fmt(pagosProv.reduce((s,pg)=>s+(pg.montoPesos||0),0),'ARS')}</div></div>` : ''}
-        <div class="monto-chip"><div class="ml">Saldo Pendiente (${moneda})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(Math.max(saldo,0),moneda)}</div></div>
+        <div class="monto-chip"><div class="ml">Saldo Pendiente (${moneda})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'}">${fmt(saldo,moneda)}</div></div>
+        ${exceso > 1 ? `<div class="monto-chip"><div class="ml">Pagado de más</div><div class="mv" style="color:var(--red)">${fmt(exceso,moneda)}</div></div>` : ''}
         ${totalCred > 0 ? `<div class="monto-chip"><div class="ml">Dto / NC aplicada</div><div class="mv" style="color:var(--purple)">-${fmt(totalCred,moneda)}</div></div>` : ''}
         ${totalNcPend > 0 ? `<div class="monto-chip"><div class="ml">⏳ De ese saldo, espera NC</div><div class="mv" style="color:#fb923c">${fmt(totalNcPend,moneda)}</div></div>` : ''}
         ${moneda==='USD' && state.tcBna && saldo>1 ? `<div class="monto-chip"><div class="ml">Saldo en $ARS (TC $${state.tcBna})</div><div class="mv" style="color:${saldo>1?'var(--yellow)':'var(--green)'};font-size:12px">${fmt(saldo*state.tcBna,'ARS')}</div></div>` : ''}
@@ -1023,7 +1040,7 @@ function buildTabCta(proveedores) {
       <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
         ${pptos.map(p => {
           const ab = getPagosDePresupuesto(p.id);
-          const sl = (parseFloat(p.totalConIva)||0) - ab - getCreditosDePresupuesto(p.id);
+          const sl = saldoPpto(p);
           const facts = getFacturasDePresupuesto(p.id);
           return `
           <div class="cta-row">
