@@ -203,7 +203,8 @@ let state = {
   ordenPagos: 'desc',     // pagos por fecha
   ordenCta: 'asc',        // cta cte alfabético
   filtroFact: 'todas',    // 'todas' | 'nc_pend'
-  filtroCtaEstado: 'todos', // cta cte: todos | pendiente | parcial | pagado | nc_pend
+  filtroCtaEstado: 'todos',
+  cerradosAbiertos: {},   // id → true si la fila de cancelados está desplegada // cta cte: todos | pendiente | parcial | pagado | nc_pend
   alertasAbiertas: false,
   tcBna: null,
 };
@@ -739,19 +740,35 @@ function buildTabPresupuestos(pptos) {
           <div style="background:#0f1117;border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:8px">
             ${pagados.map(p => {
               const facts = getFacturasDePresupuesto(p.id);
+              const abierto = !!state.cerradosAbiertos[p.id];
+              const itemsC = (p.items||[]).filter(it=>it.desc||it.precioUnit);
+              const pagosC = Object.values(state.pagos).filter(pg=>pg.presupuestoId===p.id).sort((a,b)=>(a.fechaPago||'').localeCompare(b.fechaPago||''));
               return `
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid #1e2235;flex-wrap:wrap;gap:6px">
-                <div style="flex:1;min-width:200px">
-                  <div style="color:var(--text);font-size:13px;font-weight:600">${p.proveedor} — ${p.descripcion}</div>
+              <div data-action="toggle_detalle_cerrado" data-id="${p.id}" title="${abierto?'Clic para cerrar':'Clic para ver qué incluye'}" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:${abierto?'none':'1px solid #1e2235'};flex-wrap:wrap;gap:6px;cursor:pointer;${abierto?'background:#141829':''}">
+                <div style="flex:1;min-width:200px;pointer-events:none">
+                  <div style="color:var(--text);font-size:13px;font-weight:600"><span style="color:var(--dim);font-size:10px;margin-right:6px">${abierto?'▼':'▶'}</span>${p.proveedor} — ${p.descripcion}</div>
                   <div style="color:var(--dim);font-size:11px;font-family:monospace">📅 ${p.fecha} · ${facts.length>0?'Fact: '+facts.map(f=>f.nroFactura).join(', '):'Sin factura'}${p.cerrado&&p.tcCierre?' · TC cierre: $'+p.tcCierre:''}</div>
                 </div>
-                <div style="color:var(--green);font-weight:700;font-size:13px;font-family:monospace">${p.cerrado?'✅ Abonado':'✅'} ${fmt(p.totalConIva, p.moneda)}</div>
-                <div style="display:flex;gap:4px">
+                <div style="color:var(--green);font-weight:700;font-size:13px;font-family:monospace;pointer-events:none">${p.cerrado?'✅ Abonado':'✅'} ${fmt(p.totalConIva, p.moneda)}</div>
+                <div style="display:flex;gap:4px" onclick="event.stopPropagation()">
                   <button class="btn-sm" data-action="toggle_cerrar" data-id="${p.id}" style="font-size:11px;padding:4px 8px;background:#7c2d12;color:#fff" title="Reabrir presupuesto">🔓</button>
                   <button class="btn-sm btn-edit" data-action="edit" data-id="${p.id}" style="font-size:11px;padding:4px 8px">✏</button>
                   <button class="btn-sm btn-delete" data-action="delete" data-id="${p.id}" style="font-size:11px;padding:4px 8px">🗑</button>
                 </div>
-              </div>`;
+              </div>
+              ${abierto ? `
+              <div style="background:#141829;border-bottom:1px solid #1e2235;padding:4px 12px 12px 30px">
+                <div style="color:var(--dim);font-size:10px;letter-spacing:1px;text-transform:uppercase;margin:6px 0 4px">Piezas / ítems</div>
+                ${itemsC.length === 0 ? '<div style="color:var(--dim);font-size:12px">Sin detalle de ítems.</div>' : itemsC.map(it=>`
+                <div class="item-detail-row" style="font-size:12px">
+                  <span>${it.cantidad}× ${it.desc||'—'}</span>
+                  <span>${fmt((parseFloat(it.precioUnit)||0)*(parseFloat(it.cantidad)||0), p.moneda)}</span>
+                </div>`).join('')}
+                ${pagosC.length > 0 ? `
+                <div style="color:var(--dim);font-size:10px;letter-spacing:1px;text-transform:uppercase;margin:10px 0 4px">Pagos</div>
+                ${pagosC.map(pg=>`<div style="color:var(--green);font-size:12px;font-family:monospace">💳 ${pg.fechaPago} · ${fmt(pg.monto, pg.moneda||p.moneda)} · ${pg.formaPago||''}${pg.banco?' · '+pg.banco:''}${pg.comprobante?' · 🔖 '+pg.comprobante:''}</div>`).join('')}` : ''}
+                ${p.notas ? `<div style="color:var(--dim);font-size:12px;margin-top:8px">📝 ${p.notas}</div>` : ''}
+              </div>` : ''}`;
             }).join('')}
           </div>` : ''}
       </div>` : ''}
@@ -1434,6 +1451,7 @@ function handleClick(e) {
         .then(() => toast('↩ NC anulada'));
       return;
     }
+    if(action==='toggle_detalle_cerrado') { state.cerradosAbiertos[id] = !state.cerradosAbiertos[id]; render(); return; }
     if(action==='toggle_archivados') { state.archivadosAbiertos = !state.archivadosAbiertos; render(); return; }
     if(action==='toggle_alertas') { state.alertasAbiertas = !state.alertasAbiertas; render(); return; }
     if(action==='cerrar_nota_factura') {
